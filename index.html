@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>Intonation — Pitch, BPM &amp; Rhythm Analyzer</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Intonation</h1>
+    <p class="tagline">Real-time pitch, tempo &amp; rhythm analysis</p>
+  </header>
+
+  <main>
+    <!-- Controls -->
+    <section class="controls" aria-label="Controls">
+      <button id="micBtn" class="btn btn-primary">
+        <span class="dot" aria-hidden="true"></span>
+        Start microphone
+      </button>
+
+      <label for="fileInput" class="btn btn-secondary">
+        Upload audio file
+        <input id="fileInput" type="file" accept="audio/*" hidden />
+      </label>
+
+      <button id="resetBtn" class="btn btn-ghost" disabled>Reset</button>
+
+      <div class="ref-control">
+        <label for="refPitch">A4</label>
+        <input id="refPitch" type="number" min="400" max="480" step="1" value="440" />
+        <span>Hz</span>
+      </div>
+    </section>
+
+    <p id="status" class="status" role="status">Idle — start the microphone or upload a file.</p>
+
+    <!-- Live readouts -->
+    <section class="live-grid">
+      <div class="card live-pitch">
+        <h2>Pitch</h2>
+        <div class="note-display">
+          <span id="noteName" class="note-name">—</span>
+          <span id="noteOctave" class="note-octave"></span>
+        </div>
+        <div class="cents-meter" aria-hidden="true">
+          <div class="cents-scale">
+            <span>-50</span><span>0</span><span>+50</span>
+          </div>
+          <div class="cents-track">
+            <div class="cents-zero"></div>
+            <div id="centsNeedle" class="cents-needle"></div>
+          </div>
+        </div>
+        <div id="centsValue" class="cents-value">— cents</div>
+        <div id="freqValue" class="freq-value">— Hz</div>
+      </div>
+
+      <div class="card live-bpm">
+        <h2>Tempo</h2>
+        <div id="bpmValue" class="bpm-value">—</div>
+        <div class="bpm-unit">BPM</div>
+        <div id="beatPulse" class="beat-pulse" aria-hidden="true"></div>
+        <div id="confidence" class="confidence">confidence: —</div>
+      </div>
+    </section>
+
+    <!-- Rhythm timeline -->
+    <section class="card">
+      <h2>Rhythm timeline</h2>
+      <p class="hint">Detected note onsets vs. the estimated beat grid. Red marks are off the grid.</p>
+      <canvas id="timeline" class="timeline" height="120"></canvas>
+    </section>
+
+    <!-- Worst offenders -->
+    <section class="offenders">
+      <div class="card">
+        <h2>Most out of tune</h2>
+        <ol id="outOfTune" class="offender-list">
+          <li class="empty">No notes analyzed yet.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h2>Most out of time</h2>
+        <ol id="outOfTime" class="offender-list">
+          <li class="empty">No onsets analyzed yet.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Note history -->
+    <section class="card">
+      <h2>Note history</h2>
+      <div class="table-wrap">
+        <table id="historyTable" class="history">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Note</th>
+              <th>Freq</th>
+              <th>Tuning</th>
+              <th>Timing</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="empty"><td colspan="5">Nothing yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>All analysis runs locally in your browser. No audio leaves your device.</p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
