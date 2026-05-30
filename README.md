@@ -16,13 +16,19 @@ leaves your device, and there are no runtime dependencies.
   meter showing the deviation in **cents** (color-coded: green ≤5¢, yellow ≤20¢,
   red beyond).
 - 🥁 **Live tempo** — estimated BPM with a confidence indicator and a beat pulse.
-- 📊 **Rhythm timeline** — detected note onsets drawn against the estimated beat
-  grid, color-coded by how far off the grid they land.
+- 🎼 **Colourful score view** — a grand staff (treble + bass clefs) where every
+  note is drawn twice: a **hollow target** at its perfect pitch and beat
+  position, and a **coloured overlay** showing what you actually played, nudged
+  **left/right** for early/late and **up/down** for sharp/flat. Colour encodes
+  accuracy: green = accurate, yellow = close, red = way off.
+- 🎚️ **Strictness controls** — independent pitch and rhythm sliders set how much
+  leeway counts as "accurate". They drive the score colours, the worst-offender
+  lists, the history table and the tuning meter.
 - 🏆 **Worst offenders** — the top 3 most *out of tune* notes and top 3 most
   *out of time* onsets.
 - 📜 **Note history** — a running table of every detected note with its tuning
   (cents) and timing (ms) error.
-- 🎚️ **Adjustable reference** — set the A4 tuning reference (default 440 Hz).
+- 🎵 **Adjustable reference** — set the A4 tuning reference (default 440 Hz).
 
 ## Running it
 
@@ -59,8 +65,10 @@ detection, tempo estimation and timing-error analysis.
 | Onsets | **Spectral flux** (sum of positive bin-to-bin magnitude increases) with adaptive peak-picking and a refractory period | `js/rhythm.js` |
 | Tempo (BPM) | **Autocorrelation of the onset-strength envelope**, searching musical lags (50–210 BPM) and folding octave errors | `js/rhythm.js` |
 | Timing | Fits a beat grid (best phase offset, eighth-note resolution) and reports each onset's error in ms | `js/rhythm.js` |
+| Strictness → colours | Maps each slider (0–100) to cents/ms thresholds for the green/yellow/red buckets | `js/tolerance.js` |
+| Staff layout | Maps MIDI notes to diatonic grand-staff positions (incl. sharps) | `js/staff.js` |
 | Audio graph & loop | `AnalyserNode` polled per animation frame; mic input is not routed to the speakers (no feedback), file input is | `js/analyzer.js` |
-| UI & rendering | Live readouts, canvas timeline, offender lists, history table | `js/app.js` |
+| UI & rendering | Live readouts, grand-staff score, offender lists, history table | `js/app.js` |
 
 ## Notes & limitations
 
