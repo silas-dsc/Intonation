@@ -2,16 +2,25 @@
 // loop, emitting live pitch / tempo / onset events to the UI layer.
 
 import { detectPitch, NoteTracker } from "./pitch.js";
-import { OnsetDetector, estimateTempo, analyzeTiming } from "./rhythm.js";
+import { OnsetDetector, estimateTempo, analyzeTiming, smoothBpm } from "./rhythm.js";
 
 const FFT_SIZE = 2048;
 
 export class Analyzer {
-  constructor({ a4 = 440, onFrame, onNote, onOnset } = {}) {
+  constructor({ a4 = 440, onFrame, onNote, onOnset, onStop } = {}) {
     this.a4 = a4;
     this.onFrame = onFrame;   // (frameData) => void  — every animation frame
     this.onNote = onNote;     // (note) => void       — when a note completes
     this.onOnset = onOnset;   // (time) => void       — when an onset is detected
+    this.onStop = onStop;     // () => void           — when analysis stops
+
+    // Tempo state: smoothed auto-detected BPM, optional manual (tapped) BPM,
+    // and the detection bounds.
+    this.minBpm = 50;
+    this.maxBpm = 210;
+    this.manualBpm = null;
+    this.smoothedBpm = 0;
+    this.tempoConfidence = 0;
 
     this.audioCtx = null;
     this.analyser = null;
@@ -31,6 +40,29 @@ export class Analyzer {
   setReference(a4) {
     this.a4 = a4;
     this.noteTracker.setReference(a4);
+  }
+
+  /** Constrain auto tempo detection to a BPM range. */
+  setTempoBounds(minBpm, maxBpm) {
+    this.minBpm = minBpm;
+    this.maxBpm = maxBpm;
+  }
+
+  /** Override the tempo with a tapped BPM, or pass null to resume auto-detect. */
+  setManualBpm(bpm) {
+    this.manualBpm = bpm && bpm > 0 ? bpm : null;
+  }
+
+  /** The tempo currently in effect (manual override wins over smoothed auto). */
+  _effectiveTempo() {
+    const bpm = this.manualBpm || (this.smoothedBpm ? Math.round(this.smoothedBpm) : 0);
+    if (!bpm) return null;
+    return {
+      bpm: Math.round(bpm),
+      beatPeriod: 60 / bpm,
+      confidence: this.manualBpm ? 1 : this.tempoConfidence,
+      source: this.manualBpm ? "tapped" : "auto",
+    };
   }
 
   _ensureContext() {
@@ -84,6 +116,8 @@ export class Analyzer {
   _begin() {
     this.noteTracker = new NoteTracker({ a4: this.a4 });
     this.onsetDetector.reset();
+    this.smoothedBpm = 0;
+    this.tempoConfidence = 0;
     this.startClock = this.audioCtx.currentTime;
     this.running = true;
     this._loop();
@@ -108,8 +142,16 @@ export class Analyzer {
     const finishedNote = this.noteTracker.update(freq, now);
     if (finishedNote && this.onNote) this.onNote(finishedNote);
 
-    // --- Tempo ---
-    const tempo = estimateTempo(this.onsetDetector.flux);
+    // --- Tempo (smoothed for inertia) ---
+    const raw = estimateTempo(this.onsetDetector.flux, {
+      minBpm: this.minBpm,
+      maxBpm: this.maxBpm,
+    });
+    if (raw) {
+      this.smoothedBpm = smoothBpm(this.smoothedBpm, raw.bpm);
+      this.tempoConfidence = raw.confidence;
+    }
+    const tempo = this._effectiveTempo();
 
     if (this.onFrame) {
       this.onFrame({
@@ -127,7 +169,7 @@ export class Analyzer {
    * Returns the per-onset timing array (see rhythm.analyzeTiming).
    */
   analyzeTimingNow() {
-    const tempo = estimateTempo(this.onsetDetector.flux);
+    const tempo = this._effectiveTempo();
     if (!tempo) return { timing: [], tempo: null };
     const timing = analyzeTiming(this.onsetDetector.getOnsets(), tempo.beatPeriod);
     return { timing, tempo };
@@ -142,6 +184,7 @@ export class Analyzer {
   }
 
   stop() {
+    const wasRunning = this.running;
     this.running = false;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = null;
@@ -150,6 +193,7 @@ export class Analyzer {
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
     }
+    if (wasRunning && this.onStop) this.onStop();
   }
 
   reset() {

@@ -64,6 +64,16 @@
         <div class="bpm-unit">BPM</div>
         <div id="beatPulse" class="beat-pulse" aria-hidden="true"></div>
         <div id="confidence" class="confidence">confidence: —</div>
+        <div class="tempo-controls">
+          <button id="tapBtn" class="btn btn-ghost btn-sm" title="Tap or press Enter to set the tempo">Tap tempo ⏎</button>
+          <button id="clearTempoBtn" class="btn btn-ghost btn-sm" hidden>Auto</button>
+          <div class="tempo-bounds">
+            <label for="bpmMin">min</label>
+            <input id="bpmMin" type="number" min="20" max="300" step="1" value="50" />
+            <label for="bpmMax">max</label>
+            <input id="bpmMax" type="number" min="20" max="300" step="1" value="210" />
+          </div>
+        </div>
       </div>
     </section>
 
@@ -89,6 +99,10 @@
         </span>
       </p>
       <canvas id="pianoRoll" class="pianoroll" height="320"></canvas>
+      <div class="roll-scrollbar">
+        <input id="rollScroll" type="range" min="0" max="0" step="0.05" value="0" disabled />
+        <span id="rollScrollHint" class="roll-hint">Stop the mic to scroll back through the performance.</span>
+      </div>
     </section>
 
     <!-- Worst offenders -->

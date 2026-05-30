@@ -15,7 +15,11 @@ leaves your device, and there are no runtime dependencies.
 - 🎵 **Live pitch readout** — current note, octave, frequency, and a tuning
   meter showing the deviation in **cents** (color-coded: green ≤5¢, yellow ≤20¢,
   red beyond).
-- 🥁 **Live tempo** — estimated BPM with a confidence indicator and a beat pulse.
+- 🥁 **Live tempo** — estimated BPM with a confidence indicator and a beat
+  pulse. The estimate is **smoothed for inertia** so it locks on and stays
+  steady instead of jumping between octaves. You can **tap the tempo** (button or
+  the **Enter** key) to set it manually, and constrain auto-detection with
+  **min/max BPM** bounds (which also disambiguate half/double-tempo).
 - 🎹 **Colourful piano roll** — a scrolling pitch-vs-time view with a piano
   keyboard gutter. Every note is drawn twice: a **hollow target** bar at its
   perfect pitch lane and beat position, and a **coloured overlay** bar showing
@@ -25,10 +29,14 @@ leaves your device, and there are no runtime dependencies.
 - 🎚️ **Strictness controls** — independent pitch and rhythm sliders set how much
   leeway counts as "accurate". They drive the score colours, the worst-offender
   lists, the history table and the tuning meter.
+- ⏪ **Scrollback** — when the mic is stopped (or a file finishes), scroll or
+  drag the piano roll back through the whole performance. The note-history table
+  highlights and follows the visible window.
 - 🏆 **Worst offenders** — the top 3 most *out of tune* notes and top 3 most
-  *out of time* onsets.
-- 📜 **Note history** — a running table of every detected note with its tuning
-  (cents) and timing (ms) error.
+  *out of time* onsets. **Click any one to jump** to that note in the history
+  (and centre it in the roll when paused).
+- 📜 **Note history** — a table of **every** detected note (full session) with
+  its tuning (cents) and timing (ms) error.
 - 🎵 **Adjustable reference** — set the A4 tuning reference (default 440 Hz).
 
 ## Running it
@@ -64,7 +72,7 @@ detection, tempo estimation and timing-error analysis.
 | Pitch | Time-domain **autocorrelation** with parabolic peak interpolation, then nearest equal-temperament note + cents deviation | `js/pitch.js` |
 | Note segmentation | Stable-frame **note tracker** that groups consecutive in-pitch frames into discrete notes | `js/pitch.js` |
 | Onsets | **Spectral flux** (sum of positive bin-to-bin magnitude increases) with adaptive peak-picking and a refractory period | `js/rhythm.js` |
-| Tempo (BPM) | **Autocorrelation of the onset-strength envelope**, searching musical lags (50–210 BPM) and folding octave errors | `js/rhythm.js` |
+| Tempo (BPM) | **Autocorrelation of the onset-strength envelope** over a configurable BPM range, then **exponential smoothing with octave-folding** (`smoothBpm`) for inertia; overridable by tap tempo | `js/rhythm.js` |
 | Timing | Fits a beat grid (best phase offset, eighth-note resolution) and reports each onset's error in ms | `js/rhythm.js` |
 | Strictness → colours | Maps each slider (0–100) to cents/ms thresholds for the green/yellow/red buckets | `js/tolerance.js` |
 | Audio graph & loop | `AnalyserNode` polled per animation frame; mic input is not routed to the speakers (no feedback), file input is | `js/analyzer.js` |

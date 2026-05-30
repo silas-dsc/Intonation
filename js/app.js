@@ -28,6 +28,12 @@ const els = {
   beatPulse: $("beatPulse"),
   confidence: $("confidence"),
   pianoRoll: $("pianoRoll"),
+  tapBtn: $("tapBtn"),
+  clearTempoBtn: $("clearTempoBtn"),
+  bpmMin: $("bpmMin"),
+  bpmMax: $("bpmMax"),
+  rollScroll: $("rollScroll"),
+  rollScrollHint: $("rollScrollHint"),
   pitchStrict: $("pitchStrict"),
   rhythmStrict: $("rhythmStrict"),
   pitchStrictOut: $("pitchStrictOut"),
@@ -43,6 +49,12 @@ let lastTiming = [];     // per-onset timing analysis
 let lastTempo = null;
 let latestTime = 0;      // most recent frame time (seconds)
 
+// Playback/scroll state. When `isLive` the roll follows "now"; when paused
+// (mic stopped / file ended) the user scrolls and `viewStart` drives the window.
+let isLive = false;
+let viewStart = 0;
+let tapTimes = [];       // recent tap-tempo timestamps (seconds)
+
 // Accuracy thresholds, driven by the strictness sliders.
 let pitchTol = pitchTolerance(50);
 let rhythmTol = rhythmTolerance(50);
@@ -52,20 +64,20 @@ const analyzer = new Analyzer({
   onFrame: handleFrame,
   onNote: handleNote,
   onOnset: handleOnset,
+  onStop: handleStop,
 });
 
 // ---------- Controls ----------
 
 els.micBtn.addEventListener("click", async () => {
   if (analyzer.running && analyzer.stream) {
-    analyzer.stop();
-    setRecordingUI(false);
-    setStatus("Stopped.");
+    analyzer.stop(); // fires handleStop, which updates the UI
     return;
   }
   try {
     setStatus("Requesting microphone…");
     await analyzer.startMic();
+    setLive(true);
     setRecordingUI(true);
     setStatus("Listening… play or sing a steady note.");
     els.resetBtn.disabled = false;
@@ -81,6 +93,7 @@ els.fileInput.addEventListener("change", async (e) => {
     resetState();
     setStatus(`Analyzing “${file.name}”…`);
     await analyzer.startFile(file);
+    setLive(true);
     setRecordingUI(false);
     els.micBtn.disabled = false;
     els.resetBtn.disabled = false;
@@ -122,7 +135,118 @@ function updateStrictness() {
   renderHistory();
   renderOutOfTune();
   renderOutOfTime();
-  renderPianoRoll(notes, lastTiming, latestTime, lastTempo);
+  redrawRoll();
+}
+
+// --- Tempo controls: tap tempo + detection bounds ---
+
+els.tapBtn.addEventListener("click", registerTap);
+els.clearTempoBtn.addEventListener("click", clearManualTempo);
+
+// Press Enter anywhere (except while typing in a field) to tap the tempo.
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  // Let focused form fields / buttons handle Enter themselves (a focused
+  // button's Enter already triggers its click, e.g. the Tap button).
+  const tag = e.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
+  e.preventDefault();
+  registerTap();
+});
+
+function registerTap() {
+  const now = performance.now() / 1000;
+  // Restart the tap sequence if the gap was too long to be the same tempo.
+  if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > 2) tapTimes = [];
+  tapTimes.push(now);
+  if (tapTimes.length > 6) tapTimes.shift();
+
+  if (tapTimes.length >= 2) {
+    let sum = 0;
+    for (let i = 1; i < tapTimes.length; i++) sum += tapTimes[i] - tapTimes[i - 1];
+    const avg = sum / (tapTimes.length - 1);
+    let bpm = 60 / avg;
+    const lo = +els.bpmMin.value;
+    const hi = +els.bpmMax.value;
+    while (bpm < lo) bpm *= 2;
+    while (bpm > hi) bpm /= 2;
+    bpm = Math.round(bpm);
+    analyzer.setManualBpm(bpm);
+    lastTempo = { bpm, beatPeriod: 60 / bpm, confidence: 1, source: "tapped" };
+    els.bpmValue.textContent = bpm;
+    els.confidence.textContent = "tapped";
+    els.clearTempoBtn.hidden = false;
+    if (!isLive) refreshPaused();
+  } else {
+    setStatus("Tap again to set the tempo…");
+  }
+}
+
+function clearManualTempo() {
+  analyzer.setManualBpm(null);
+  tapTimes = [];
+  els.clearTempoBtn.hidden = true;
+  els.confidence.textContent = "confidence: —";
+  if (!isLive) refreshPaused();
+}
+
+els.bpmMin.addEventListener("change", updateTempoBounds);
+els.bpmMax.addEventListener("change", updateTempoBounds);
+
+function updateTempoBounds() {
+  let lo = Math.round(+els.bpmMin.value);
+  let hi = Math.round(+els.bpmMax.value);
+  lo = Math.max(20, Math.min(290, lo));
+  hi = Math.max(lo + 10, Math.min(300, hi));
+  els.bpmMin.value = lo;
+  els.bpmMax.value = hi;
+  analyzer.setTempoBounds(lo, hi);
+  if (!isLive) refreshPaused();
+}
+
+// --- Piano-roll scrolling (enabled when paused) ---
+
+els.rollScroll.addEventListener("input", () => {
+  if (isLive) return;
+  viewStart = +els.rollScroll.value;
+  redrawRoll();
+  syncHistoryToView();
+});
+
+// Mouse-wheel and drag panning over the canvas when paused.
+els.pianoRoll.addEventListener("wheel", (e) => {
+  if (isLive) return;
+  e.preventDefault();
+  const delta = (e.deltaX || e.deltaY) / 200;
+  setViewStart(viewStart + delta * (ROLL.windowSec / 4));
+}, { passive: false });
+
+let dragging = false;
+let dragX = 0;
+els.pianoRoll.addEventListener("pointerdown", (e) => {
+  if (isLive) return;
+  dragging = true;
+  dragX = e.clientX;
+  els.pianoRoll.setPointerCapture(e.pointerId);
+});
+els.pianoRoll.addEventListener("pointermove", (e) => {
+  if (!dragging || isLive) return;
+  const dx = e.clientX - dragX;
+  dragX = e.clientX;
+  const secPerPx = ROLL.windowSec / (els.pianoRoll.clientWidth - ROLL.keyboardW);
+  setViewStart(viewStart - dx * secPerPx); // drag right => go back in time
+});
+els.pianoRoll.addEventListener("pointerup", () => { dragging = false; });
+
+function setViewStart(v) {
+  viewStart = Math.max(0, Math.min(maxViewStart(), v));
+  els.rollScroll.value = viewStart;
+  redrawRoll();
+  syncHistoryToView();
+}
+
+function maxViewStart() {
+  return Math.max(0, latestTime - ROLL.windowSec);
 }
 
 // ---------- Event handlers ----------
@@ -144,14 +268,29 @@ function handleFrame(data) {
   if (data.tempo) {
     lastTempo = data.tempo;
     els.bpmValue.textContent = data.tempo.bpm;
-    els.confidence.textContent = `confidence: ${(data.tempo.confidence * 100).toFixed(0)}%`;
+    els.confidence.textContent =
+      data.tempo.source === "tapped"
+        ? "tapped"
+        : `confidence: ${(data.tempo.confidence * 100).toFixed(0)}%`;
   }
 
-  // Refresh timing analysis periodically and redraw the score.
+  // Refresh timing analysis periodically and redraw the roll.
   const res = analyzer.analyzeTimingNow();
   if (res.timing.length) lastTiming = res.timing;
-  renderPianoRoll(notes, lastTiming, data.time, data.tempo);
+  redrawRoll();
   renderOutOfTime();
+}
+
+function handleStop() {
+  setLive(false);
+  setRecordingUI(false);
+  if (notes.length) {
+    setStatus(
+      latestTime > ROLL.windowSec
+        ? "Stopped. Scroll or drag the roll to review earlier notes."
+        : "Stopped."
+    );
+  }
 }
 
 function handleNote(note) {
@@ -163,6 +302,48 @@ function handleNote(note) {
 function handleOnset() {
   els.beatPulse.classList.add("beat");
   setTimeout(() => els.beatPulse.classList.remove("beat"), 90);
+}
+
+// --- View / scroll helpers ---
+
+/** Switch between live-follow and paused-scroll modes. */
+function setLive(live) {
+  isLive = live;
+  if (live) {
+    els.rollScroll.disabled = true;
+    els.rollScrollHint.textContent = "Stop the mic to scroll back through the performance.";
+    clearHistoryHighlight();
+  } else {
+    // Park the view on the most recent window and enable scrolling.
+    viewStart = maxViewStart();
+    els.rollScroll.max = maxViewStart();
+    els.rollScroll.value = viewStart;
+    els.rollScroll.disabled = latestTime <= ROLL.windowSec;
+    els.rollScrollHint.textContent =
+      latestTime > ROLL.windowSec ? "Scroll or drag to review earlier notes." : "Performance fits one screen.";
+    redrawRoll();
+    syncHistoryToView();
+  }
+}
+
+/** Window start currently shown: follows "now" when live, else the scroll pos. */
+function currentWinStart() {
+  return isLive ? Math.max(0, latestTime - ROLL.windowSec) : viewStart;
+}
+
+function redrawRoll() {
+  renderPianoRoll(notes, lastTiming, currentWinStart(), lastTempo);
+}
+
+/** Recompute analysis and redraw while paused (after a tempo/strictness change). */
+function refreshPaused() {
+  const res = analyzer.analyzeTimingNow();
+  if (res.timing.length) lastTiming = res.timing;
+  renderHistory();
+  renderOutOfTune();
+  renderOutOfTime();
+  redrawRoll();
+  syncHistoryToView();
 }
 
 // ---------- Rendering ----------
@@ -180,29 +361,31 @@ function updateCentsNeedle(cents) {
 }
 
 function renderHistory() {
-  if (!notes.length) return;
-  const rows = notes
-    .slice(-60)
-    .reverse()
-    .map((n, i) => {
-      const idx = notes.length - i;
-      const timing = timingForNote(n);
-      const centsCls = classify(Math.abs(n.cents), pitchTol);
-      const tCell = timing
-        ? `<span class="metric ${classify(Math.abs(timing.errorMs), rhythmTol)}">${
-            timing.errorMs > 0 ? "+" : ""
-          }${timing.errorMs.toFixed(0)} ms</span>`
-        : "—";
-      return `<tr>
-        <td>${idx}</td>
+  if (!notes.length) {
+    els.historyBody.innerHTML = '<tr class="empty"><td colspan="5">Nothing yet.</td></tr>';
+    return;
+  }
+  // Render the full history, newest first.
+  const rows = [];
+  for (let i = notes.length - 1; i >= 0; i--) {
+    const n = notes[i];
+    const timing = timingForNote(n);
+    const centsCls = classify(Math.abs(n.cents), pitchTol);
+    const tCell = timing
+      ? `<span class="metric ${classify(Math.abs(timing.errorMs), rhythmTol)}">${
+          timing.errorMs > 0 ? "+" : ""
+        }${timing.errorMs.toFixed(0)} ms</span>`
+      : "—";
+    rows.push(`<tr data-idx="${i}" data-start="${n.startTime.toFixed(3)}">
+        <td>${i + 1}</td>
         <td>${n.name}${n.octave}</td>
         <td>${n.idealFreq.toFixed(1)} Hz</td>
         <td><span class="metric ${centsCls}">${n.cents > 0 ? "+" : ""}${n.cents}¢</span></td>
         <td>${tCell}</td>
-      </tr>`;
-    })
-    .join("");
-  els.historyBody.innerHTML = rows;
+      </tr>`);
+  }
+  els.historyBody.innerHTML = rows.join("");
+  if (!isLive) syncHistoryToView();
 }
 
 function renderOutOfTune() {
@@ -217,7 +400,7 @@ function renderOutOfTune() {
     .map((n) => {
       const cls = classify(Math.abs(n.cents), pitchTol);
       const dir = n.cents > 0 ? "sharp" : "flat";
-      return `<li>
+      return `<li class="clickable" data-idx="${notes.indexOf(n)}" title="Jump to this note in the history">
         <span class="label">${n.name}${n.octave}</span>
         <span class="metric ${cls}">${Math.abs(n.cents)}¢ ${dir}</span>
       </li>`;
@@ -237,12 +420,72 @@ function renderOutOfTime() {
     .map((t) => {
       const cls = classify(Math.abs(t.errorMs), rhythmTol);
       const dir = t.errorMs > 0 ? "late" : "early";
-      return `<li>
+      const idx = nearestNoteIndex(t.time);
+      const click = idx >= 0 ? `class="clickable" data-idx="${idx}" title="Jump to this note in the history"` : "";
+      return `<li ${click}>
         <span class="label">onset @ ${t.time.toFixed(2)}s</span>
         <span class="metric ${cls}">${Math.abs(t.errorMs).toFixed(0)} ms ${dir}</span>
       </li>`;
     })
     .join("");
+}
+
+els.outOfTune.addEventListener("click", offenderClick);
+els.outOfTime.addEventListener("click", offenderClick);
+
+function offenderClick(e) {
+  const li = e.target.closest("li[data-idx]");
+  if (!li) return;
+  const idx = +li.dataset.idx;
+  if (idx >= 0) jumpToNote(idx);
+}
+
+/** Index of the completed note whose start is closest to a given time. */
+function nearestNoteIndex(time) {
+  let best = -1;
+  let bestDist = 0.35; // only link if a note is reasonably close
+  for (let i = 0; i < notes.length; i++) {
+    const d = Math.abs(notes[i].startTime - time);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+// --- History sync / navigation ---
+
+function syncHistoryToView() {
+  if (isLive) { clearHistoryHighlight(); return; }
+  const start = currentWinStart();
+  const end = start + ROLL.windowSec;
+  const rows = els.historyBody.querySelectorAll("tr[data-start]");
+  let firstInView = null;
+  rows.forEach((row) => {
+    const t = parseFloat(row.dataset.start);
+    const inView = t >= start && t <= end;
+    row.classList.toggle("in-view", inView);
+    if (inView && !firstInView) firstInView = row;
+  });
+  if (firstInView) firstInView.scrollIntoView({ block: "nearest" });
+}
+
+function clearHistoryHighlight() {
+  els.historyBody.querySelectorAll("tr.in-view").forEach((r) => r.classList.remove("in-view"));
+}
+
+function scrollToHistory(idx) {
+  const row = els.historyBody.querySelector(`tr[data-idx="${idx}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 1200);
+}
+
+/** Jump to a note: highlight it in the history and (when paused) centre the roll. */
+function jumpToNote(idx) {
+  const n = notes[idx];
+  if (!n) return;
+  if (!isLive) setViewStart(n.startTime - ROLL.windowSec / 2);
+  scrollToHistory(idx);
 }
 
 /** Find the timing analysis entry whose onset best lines up with a note. */
@@ -297,7 +540,7 @@ function pitchRange(noteList) {
   return { lo, hi };
 }
 
-function renderPianoRoll(noteList, timing, now, tempo) {
+function renderPianoRoll(noteList, timing, winStart, tempo) {
   const canvas = els.pianoRoll;
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || 600;
@@ -312,7 +555,8 @@ function renderPianoRoll(noteList, timing, now, tempo) {
 
   const plotLeft = ROLL.keyboardW;
   const plotW = cssW - plotLeft - 8;
-  const start = Math.max(0, now - ROLL.windowSec);
+  const start = Math.max(0, winStart);
+  const end = start + ROLL.windowSec;
   const xOf = (t) => plotLeft + ((t - start) / ROLL.windowSec) * plotW;
   const pxPerSec = plotW / ROLL.windowSec;
 
@@ -331,7 +575,7 @@ function renderPianoRoll(noteList, timing, now, tempo) {
     ctx.strokeStyle = "rgba(255,255,255,0.07)";
     ctx.lineWidth = 1;
     const first = Math.ceil(start / tempo.beatPeriod) * tempo.beatPeriod;
-    for (let t = first; t <= now; t += tempo.beatPeriod) {
+    for (let t = first; t <= end; t += tempo.beatPeriod) {
       const x = xOf(t);
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -355,7 +599,7 @@ function renderPianoRoll(noteList, timing, now, tempo) {
     const perfectTime = n.startTime - errorMs / 1000; // nearest beat slot
     const dur = Math.max(0.08, n.endTime - n.startTime);
     const w = Math.max(6, dur * pxPerSec);
-    if (xOf(n.startTime) + w < plotLeft || perfectTime > now) continue;
+    if (n.startTime + dur < start || perfectTime > end) continue;
 
     const pitchClass = classify(Math.abs(n.cents), pitchTol);
     const timingClass = timingEntry ? classify(Math.abs(errorMs), rhythmTol) : "good";
@@ -393,14 +637,16 @@ function renderPianoRoll(noteList, timing, now, tempo) {
   }
   ctx.restore();
 
-  // "Now" cursor.
-  ctx.strokeStyle = "rgba(124,92,255,0.7)";
-  ctx.lineWidth = 2;
-  const nx = xOf(now);
-  ctx.beginPath();
-  ctx.moveTo(nx, 0);
-  ctx.lineTo(nx, cssH);
-  ctx.stroke();
+  // Playhead cursor at the latest analyzed time, when it's within view.
+  if (latestTime >= start && latestTime <= end) {
+    ctx.strokeStyle = "rgba(124,92,255,0.7)";
+    ctx.lineWidth = 2;
+    const nx = xOf(latestTime);
+    ctx.beginPath();
+    ctx.moveTo(nx, 0);
+    ctx.lineTo(nx, cssH);
+    ctx.stroke();
+  }
 }
 
 function drawLanes(ctx, lo, hi, rowH, laneTop, plotLeft, cssW) {
@@ -472,6 +718,12 @@ function resetState() {
   els.centsNeedle.style.left = "50%";
   els.historyBody.innerHTML = '<tr class="empty"><td colspan="5">Nothing yet.</td></tr>';
   latestTime = 0;
+  viewStart = 0;
+  isLive = false;
+  els.rollScroll.max = 0;
+  els.rollScroll.value = 0;
+  els.rollScroll.disabled = true;
+  els.rollScrollHint.textContent = "Stop the mic to scroll back through the performance.";
   renderOutOfTune();
   renderOutOfTime();
   const ctx = els.pianoRoll.getContext("2d");
@@ -487,11 +739,12 @@ function setStatus(msg) {
   els.status.textContent = msg;
 }
 
-// Redraw the score on resize so it stays crisp.
+// Redraw the roll on resize so it stays crisp.
 window.addEventListener("resize", () => {
   if (analyzer.running) return; // live loop already redraws
-  renderPianoRoll(notes, lastTiming, latestTime, lastTempo);
+  redrawRoll();
 });
 
-// Initialise strictness labels.
+// Initialise strictness labels, tempo bounds, and an empty roll.
 updateStrictness();
+updateTempoBounds();

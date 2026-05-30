@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { detectPitch, frequencyToNote, noteToFrequency } from "../js/pitch.js";
-import { estimateTempo, analyzeTiming } from "../js/rhythm.js";
+import { estimateTempo, analyzeTiming, smoothBpm } from "../js/rhythm.js";
 
 const SR = 44100;
 
@@ -75,8 +75,43 @@ test("estimateTempo recovers 120 BPM from a synthetic onset envelope", () => {
   }
   const res = estimateTempo(flux);
   assert.ok(res, "expected a tempo estimate");
-  // Allow octave-folded equivalents (120 is the target).
+  // A pure 0.5s click train is octave-ambiguous (60/120/240 all fit); accept
+  // any octave equivalent of 120.
+  const octaveOk = [60, 120, 240].some((b) => Math.abs(res.bpm - b) <= 3);
+  assert.ok(octaveOk, `got ${res.bpm} BPM`);
+});
+
+test("estimateTempo honours a narrowed BPM range", () => {
+  const fps = 100;
+  const seconds = 8;
+  const period = 0.5;
+  const flux = [];
+  for (let i = 0; i < seconds * fps; i++) {
+    const t = i / fps;
+    flux.push({ t, value: (t % period) / period < 0.03 ? 100 : 1 });
+  }
+  // Force the 120 octave by excluding 60.
+  const res = estimateTempo(flux, { minBpm: 90, maxBpm: 200 });
   assert.ok(Math.abs(res.bpm - 120) <= 3, `got ${res.bpm} BPM`);
+});
+
+test("smoothBpm seeds from the first reading", () => {
+  assert.equal(smoothBpm(0, 120), 120);
+  assert.equal(smoothBpm(120, 0), 120); // missing raw keeps previous
+});
+
+test("smoothBpm adds inertia (small step toward raw)", () => {
+  const next = smoothBpm(120, 130, 0.1);
+  assert.ok(next > 120 && next < 122, `got ${next}`);
+});
+
+test("smoothBpm folds octave errors toward the previous tempo", () => {
+  // A doubled estimate should be folded back near 120, not jump to 240.
+  const next = smoothBpm(120, 240, 0.5);
+  assert.ok(Math.abs(next - 120) < 1, `got ${next}`);
+  // A halved estimate likewise.
+  const next2 = smoothBpm(120, 60, 0.5);
+  assert.ok(Math.abs(next2 - 120) < 1, `got ${next2}`);
 });
 
 test("analyzeTiming flags a late onset", () => {

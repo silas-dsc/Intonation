@@ -249,6 +249,77 @@ body {
 }
 .confidence { font-size: 0.75rem; color: var(--text-dim); }
 
+.tempo-controls {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+.tempo-bounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.tempo-bounds input {
+  width: 52px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 4px;
+  text-align: center;
+  font-size: 0.8rem;
+}
+.tempo-bounds input:focus { outline: 1px solid var(--accent); }
+
+/* Piano-roll scrollbar */
+.roll-scrollbar {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.roll-scrollbar input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  outline: none;
+}
+.roll-scrollbar input[type="range"]:disabled { opacity: 0.4; }
+.roll-scrollbar input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px; height: 16px;
+  border-radius: 6px;
+  background: var(--accent);
+  cursor: grab;
+}
+.roll-scrollbar input[type="range"]::-moz-range-thumb {
+  width: 28px; height: 16px;
+  border-radius: 6px;
+  background: var(--accent);
+  border: none;
+  cursor: grab;
+}
+.roll-hint { font-size: 0.72rem; color: var(--text-dim); white-space: nowrap; }
+
+/* Clickable offenders + history highlight */
+.offender-list li.clickable { cursor: pointer; }
+.offender-list li.clickable:hover { color: var(--accent); }
+.history tr.in-view td { background: rgba(76, 194, 255, 0.07); }
+.history tr.flash td { background: rgba(124, 92, 255, 0.35); transition: background 0.1s; }
+
 /* Piano roll */
 .pianoroll {
   width: 100%;

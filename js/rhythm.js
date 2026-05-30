@@ -133,11 +133,29 @@ export function estimateTempo(flux, { minBpm = 50, maxBpm = 210 } = {}) {
   const confidence = zero > 0 ? Math.min(1, bestScore / zero) : 0;
 
   let bpm = 60 / (bestLag / fps);
-  // Fold octave errors into a typical performance range.
-  while (bpm < 70) bpm *= 2;
-  while (bpm > 180) bpm /= 2;
+  // Keep within the requested bounds (fold octave errors back into range).
+  while (bpm < minBpm) bpm *= 2;
+  while (bpm > maxBpm) bpm /= 2;
 
   return { bpm: Math.round(bpm), confidence, beatPeriod: 60 / bpm };
+}
+
+/**
+ * Smooths a BPM estimate toward a previous value for inertia, folding octave
+ * errors (half/double) toward the previous reading so the displayed tempo stays
+ * stable instead of flickering between octaves or jittering frame to frame.
+ *
+ * `alpha` is the blend factor (0 = frozen, 1 = no smoothing); lower = more
+ * inertia.
+ */
+export function smoothBpm(prevBpm, rawBpm, alpha = 0.06) {
+  if (!prevBpm) return rawBpm;
+  if (!rawBpm) return prevBpm;
+  let r = rawBpm;
+  // Fold the raw estimate toward the previous tempo's octave.
+  while (r < prevBpm / 1.4) r *= 2;
+  while (r > prevBpm * 1.4) r /= 2;
+  return prevBpm + alpha * (r - prevBpm);
 }
 
 /**
