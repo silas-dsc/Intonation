@@ -53,6 +53,7 @@ const els = {
   outOfTune: $("outOfTune"),
   outOfTime: $("outOfTime"),
   historyBody: document.querySelector("#historyTable tbody"),
+  historyWrap: document.querySelector(".table-wrap"),
 };
 
 let a4 = 440;
@@ -644,7 +645,30 @@ function syncHistoryToView() {
     row.classList.toggle("in-view", inView);
     if (inView && !firstInView) firstInView = row;
   });
-  if (firstInView) firstInView.scrollIntoView({ block: "nearest" });
+  if (firstInView) scrollWrapToRow(firstInView, false);
+}
+
+/**
+ * Scroll the history table's own container to a row WITHOUT scrolling the page.
+ * (element.scrollIntoView can move the whole window, which made the page jump on
+ * every interaction.)
+ */
+function scrollWrapToRow(row, center) {
+  const wrap = els.historyWrap;
+  if (!wrap) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const rowTopInWrap = rowRect.top - wrapRect.top + wrap.scrollTop;
+  if (center) {
+    wrap.scrollTop = rowTopInWrap - wrap.clientHeight / 2 + rowRect.height / 2;
+  } else {
+    const rel = rowRect.top - wrapRect.top;
+    if (rel < 0) {
+      wrap.scrollTop = rowTopInWrap;
+    } else if (rel + rowRect.height > wrap.clientHeight) {
+      wrap.scrollTop = rowTopInWrap - wrap.clientHeight + rowRect.height;
+    }
+  }
 }
 
 function clearHistoryHighlight() {
@@ -654,7 +678,7 @@ function clearHistoryHighlight() {
 function scrollToHistory(idx) {
   const row = els.historyBody.querySelector(`tr[data-idx="${idx}"]`);
   if (!row) return;
-  row.scrollIntoView({ block: "center", behavior: "smooth" });
+  scrollWrapToRow(row, true);
   row.classList.add("flash");
   setTimeout(() => row.classList.remove("flash"), 1200);
 }
