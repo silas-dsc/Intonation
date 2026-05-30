@@ -37,6 +37,21 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// If the preferred port is taken, fall back to an OS-assigned free port
+// (unless PORT was set explicitly, in which case respect the user's choice).
+const portWasExplicit = process.env.PORT != null;
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE" && !portWasExplicit) {
+    console.warn(`Port ${PORT} is in use — picking a free port instead…`);
+    server.listen(0);
+  } else {
+    console.error(err.message);
+    process.exit(1);
+  }
+});
+
 server.listen(PORT, () => {
-  console.log(`Intonation running at http://localhost:${PORT}`);
+  const { port } = server.address();
+  console.log(`Intonation running at http://localhost:${port}`);
 });
