@@ -723,34 +723,58 @@ function isBlackKey(midi) {
   return BLACK_KEYS.has(((midi % 12) + 12) % 12);
 }
 
-/** Pick the visible MIDI range from the notes on screen (with padding). */
+/** Pick the visible MIDI range. When vertically zoomed in, the window follows
+ *  the pitch under the playhead so the current notes stay on screen. */
 function pitchRange(noteList) {
-  let lo = Infinity;
-  let hi = -Infinity;
+  let loFull = Infinity;
+  let hiFull = -Infinity;
   for (const n of noteList) {
-    if (n.midi < lo) lo = n.midi;
-    if (n.midi > hi) hi = n.midi;
+    if (n.midi < loFull) loFull = n.midi;
+    if (n.midi > hiFull) hiFull = n.midi;
   }
-  if (!isFinite(lo)) {
-    lo = ROLL.defaultLow;
-    hi = ROLL.defaultHigh;
+  if (!isFinite(loFull)) {
+    loFull = ROLL.defaultLow;
+    hiFull = ROLL.defaultHigh;
   }
-  lo -= ROLL.pad;
-  hi += ROLL.pad;
-  let span = hi - lo;
+  loFull -= ROLL.pad;
+  hiFull += ROLL.pad;
+  let span = hiFull - loFull;
   if (span < ROLL.minSpan) {
     const extra = Math.ceil((ROLL.minSpan - span) / 2);
-    lo -= extra;
-    hi += extra;
-    span = hi - lo;
+    loFull -= extra;
+    hiFull += extra;
+    span = hiFull - loFull;
   }
-  // Apply vertical zoom: scale the visible span about its centre. Zooming in
-  // (vZoom > 1) shows fewer semitones with taller lanes; notes outside clip.
-  const center = (lo + hi) / 2;
+
+  // Vertical zoom: show fewer semitones (taller lanes) when zoomed in.
   const zoomedSpan = Math.max(5, Math.round(span / vZoom));
-  lo = Math.round(center - zoomedSpan / 2);
-  hi = lo + zoomedSpan;
-  return { lo, hi };
+  if (zoomedSpan >= span) return { lo: loFull, hi: hiFull }; // everything fits
+
+  // Centre the window on the pitch under the playhead (falling back to the
+  // overall centre), then clamp so it stays within the performed range.
+  const focus = focusMidi(noteList, playheadTime);
+  const center = focus != null ? focus : (loFull + hiFull) / 2;
+  let lo = Math.round(center - zoomedSpan / 2);
+  if (lo < loFull) lo = loFull;
+  if (lo + zoomedSpan > hiFull) lo = hiFull - zoomedSpan;
+  return { lo, hi: lo + zoomedSpan };
+}
+
+/** Mean pitch of notes sounding at `time` (else the nearest note in time). */
+function focusMidi(noteList, time) {
+  let sum = 0;
+  let count = 0;
+  for (const n of noteList) {
+    if (time >= n.startTime - 0.05 && time <= n.endTime + 0.05) { sum += n.midi; count++; }
+  }
+  if (count) return sum / count;
+  let best = null;
+  let bestDist = Infinity;
+  for (const n of noteList) {
+    const d = Math.min(Math.abs(n.startTime - time), Math.abs(n.endTime - time));
+    if (d < bestDist) { bestDist = d; best = n; }
+  }
+  return best ? best.midi : null;
 }
 
 function renderPianoRoll(noteList, timing, winStart, tempo) {
