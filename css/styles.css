@@ -388,6 +388,35 @@ body {
   background: var(--bg-elev);
   border-radius: 8px;
   border: 1px solid var(--border);
+  /* Keep wheel / touch-drag panning from scrolling the page. */
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+.pianoroll:active { cursor: grabbing; }
+
+.zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.zoom-label { font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+.zoom-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom-axis { margin-right: 2px; }
+.zoom-group .btn-sm {
+  padding: 2px 10px;
+  font-size: 1rem;
+  line-height: 1;
+  min-width: 30px;
 }
 
 .score-head {

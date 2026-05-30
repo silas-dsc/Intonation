@@ -16,7 +16,9 @@ export class Analyzer {
     this.onRecordingReady = onRecordingReady; // (AudioBuffer|null) => void
 
     // Captured audio for later playback (mic via MediaRecorder, files directly).
-    this.recordedBuffer = null;
+    // Exposed as { url, duration } so playback can use an <audio> element.
+    this.recordedInfo = null;
+    this.recordedUrl = null;
     this.recorder = null;
     this.chunks = [];
     this.discardRecording = false; // set on reset to drop an in-flight decode
@@ -110,7 +112,8 @@ export class Analyzer {
 
   /** Capture the mic stream to a buffer (if supported) for later playback. */
   _startRecording() {
-    this.recordedBuffer = null;
+    this._revokeUrl();
+    this.recordedInfo = null;
     this.chunks = [];
     this.recorder = null;
     this.discardRecording = false;
@@ -128,14 +131,25 @@ export class Analyzer {
       if (this.discardRecording) return; // a reset happened; drop this take
       try {
         const blob = new Blob(this.chunks, { type: this.recorder.mimeType || "audio/webm" });
+        // Decode once to get a reliable duration (WebM from MediaRecorder often
+        // lacks duration metadata), then play via an <audio> element.
         const ab = await blob.arrayBuffer();
-        this.recordedBuffer = await this.audioCtx.decodeAudioData(ab);
+        const buffer = await this.audioCtx.decodeAudioData(ab.slice(0));
+        this.recordedUrl = URL.createObjectURL(blob);
+        this.recordedInfo = { url: this.recordedUrl, duration: buffer.duration };
       } catch (_) {
-        this.recordedBuffer = null;
+        this.recordedInfo = null;
       }
-      if (this.onRecordingReady) this.onRecordingReady(this.recordedBuffer);
+      if (this.onRecordingReady) this.onRecordingReady(this.recordedInfo);
     };
     this.recorder.start();
+  }
+
+  _revokeUrl() {
+    if (this.recordedUrl) {
+      try { URL.revokeObjectURL(this.recordedUrl); } catch (_) {}
+      this.recordedUrl = null;
+    }
   }
 
   /** Decode and analyze an uploaded audio file, playing it back as it goes. */
@@ -143,8 +157,11 @@ export class Analyzer {
     this._ensureContext();
     await this.audioCtx.resume();
     const arrayBuf = await file.arrayBuffer();
-    const audioBuf = await this.audioCtx.decodeAudioData(arrayBuf);
-    this.recordedBuffer = audioBuf; // available for playback once analysis ends
+    const audioBuf = await this.audioCtx.decodeAudioData(arrayBuf.slice(0));
+    // Available for pitch-preserving playback once analysis ends.
+    this._revokeUrl();
+    this.recordedUrl = URL.createObjectURL(file);
+    this.recordedInfo = { url: this.recordedUrl, duration: audioBuf.duration };
     this.recorder = null;
 
     this._disconnectSource();
@@ -241,8 +258,8 @@ export class Analyzer {
     // onRecordingReady; for files the buffer is already available.
     if (this.recorder && this.recorder.state !== "inactive") {
       this.recorder.stop();
-    } else if (wasRunning && !this.discardRecording && this.recordedBuffer && this.onRecordingReady) {
-      this.onRecordingReady(this.recordedBuffer);
+    } else if (wasRunning && !this.discardRecording && this.recordedInfo && this.onRecordingReady) {
+      this.onRecordingReady(this.recordedInfo);
     }
 
     if (this.stream) {
@@ -257,7 +274,8 @@ export class Analyzer {
     this.stop();
     this.noteTracker = new NoteTracker({ a4: this.a4 });
     this.onsetDetector.reset();
-    this.recordedBuffer = null;
+    this._revokeUrl();
+    this.recordedInfo = null;
     this.recorder = null;
     this.chunks = [];
   }

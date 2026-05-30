@@ -98,6 +98,19 @@
           <i class="sw good"></i>accurate <i class="sw warn"></i>close <i class="sw bad"></i>way&nbsp;off
         </span>
       </p>
+      <div class="zoom-bar">
+        <span class="zoom-label">Zoom</span>
+        <div class="zoom-group" role="group" aria-label="Horizontal zoom">
+          <span class="zoom-axis">time</span>
+          <button id="zoomHOut" class="btn btn-ghost btn-sm" title="Zoom out (more time)">−</button>
+          <button id="zoomHIn" class="btn btn-ghost btn-sm" title="Zoom in (less time)">+</button>
+        </div>
+        <div class="zoom-group" role="group" aria-label="Vertical zoom">
+          <span class="zoom-axis">pitch</span>
+          <button id="zoomVOut" class="btn btn-ghost btn-sm" title="Zoom out (more notes)">−</button>
+          <button id="zoomVIn" class="btn btn-ghost btn-sm" title="Zoom in (fewer notes)">+</button>
+        </div>
+      </div>
       <canvas id="pianoRoll" class="pianoroll" height="320"></canvas>
       <div class="roll-scrollbar">
         <span id="playTime" class="play-time">0:00</span>
@@ -109,6 +122,9 @@
         <button id="playBtn" class="btn btn-primary btn-sm">▶ Play</button>
         <label class="click-toggle">
           <input id="clickToggle" type="checkbox" /> Click track
+        </label>
+        <label class="click-toggle">
+          <input id="synthToggle" type="checkbox" /> MIDI notes
         </label>
         <div class="speed-control">
           <label for="speed">Speed</label>

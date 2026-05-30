@@ -36,8 +36,13 @@ leaves your device, and there are no runtime dependencies.
   scroll/drag the roll directly.
 - 🥁 **Click track** — toggle a metronome locked to the detected/tapped beat grid
   (accented downbeats) during playback.
-- 🐢 **Variable speed** — play back from **0.3× to 2×** in 0.1 steps; the click
-  track and roll stay in sync.
+- 🎹 **MIDI playback** — toggle a synthesized piano voice that plays your detected
+  notes in time with the audio (great for checking pitch by ear).
+- 🐢 **Variable speed** — play back from **0.3× to 2×** in 0.1 steps **without
+  changing pitch** (the `<audio>` element preserves pitch); click and synth stay
+  in sync.
+- 🔍 **Zoom** — independent horizontal (time) and vertical (pitch) +/- zoom on the
+  piano roll.
 - 🏆 **Worst offenders** — the top 3 most *out of tune* notes and top 3 most
   *out of time* onsets. **Click any one to jump** to that note in the history
   (and centre it in the roll when paused).
@@ -82,7 +87,7 @@ detection, tempo estimation and timing-error analysis.
 | Timing | Fits a beat grid (best phase offset, eighth-note resolution) and reports each onset's error in ms | `js/rhythm.js` |
 | Strictness → colours | Maps each slider (0–100) to cents/ms thresholds for the green/yellow/red buckets | `js/tolerance.js` |
 | Recording | Mic captured via `MediaRecorder` then decoded to an `AudioBuffer`; uploaded files are decoded directly | `js/analyzer.js` |
-| Playback | `AudioBufferSourceNode` with `playbackRate` for variable speed, a continuous media-time `position()` for roll sync, and a look-ahead metronome scheduler on the beat grid | `js/playback.js` |
+| Playback | `<audio>` element so variable `playbackRate` **preserves pitch**; a look-ahead Web-Audio scheduler adds the metronome click and a synthesized piano voice, both locked to the audio's media clock | `js/playback.js` |
 | Audio graph & loop | `AnalyserNode` polled per animation frame; mic input is not routed to the speakers (no feedback), file input is | `js/analyzer.js` |
 | UI & rendering | Live readouts, piano-roll view, transport, offender lists, history table | `js/app.js` |
 

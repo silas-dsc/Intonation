@@ -39,8 +39,13 @@ const els = {
   playbackControls: $("playbackControls"),
   playBtn: $("playBtn"),
   clickToggle: $("clickToggle"),
+  synthToggle: $("synthToggle"),
   speed: $("speed"),
   speedOut: $("speedOut"),
+  zoomHIn: $("zoomHIn"),
+  zoomHOut: $("zoomHOut"),
+  zoomVIn: $("zoomVIn"),
+  zoomVOut: $("zoomVOut"),
   pitchStrict: $("pitchStrict"),
   rhythmStrict: $("rhythmStrict"),
   pitchStrictOut: $("pitchStrictOut"),
@@ -70,6 +75,12 @@ let seekPos = 0;         // transport position / play-from point (seconds)
 let seeking = false;     // user is dragging the transport slider
 let playbackRate = 1;
 let clickOn = false;
+let synthOn = false;
+
+// Piano-roll zoom: horizontal = seconds across the view; vertical = factor that
+// scales the auto-fitted semitone span (higher = more zoomed in / taller lanes).
+let winSec = 8;
+let vZoom = 1;
 
 // Accuracy thresholds, driven by the strictness sliders.
 let pitchTol = pitchTolerance(50);
@@ -224,7 +235,7 @@ function updateTempoBounds() {
 // --- Transport: a unified time scrubber (review + playback seek) ---
 
 function hasRecording() {
-  return !!(playback && playback.buffer);
+  return !!(playback && playback.duration > 0);
 }
 
 function transportMax() {
@@ -235,7 +246,7 @@ function transportMax() {
 function setTransport(t) {
   seekPos = Math.max(0, Math.min(transportMax(), t));
   playheadTime = seekPos;
-  viewStart = Math.max(0, seekPos - ROLL.windowSec / 2);
+  viewStart = Math.max(0, seekPos - winSec / 2);
   els.rollScroll.value = seekPos;
   updatePlayTimeLabel();
   redrawRoll();
@@ -271,22 +282,24 @@ els.pianoRoll.addEventListener("wheel", (e) => {
   if (isLive) return;
   e.preventDefault();
   const delta = (e.deltaX || e.deltaY) / 200;
-  setTransport(seekPos + delta * (ROLL.windowSec / 4));
+  setTransport(seekPos + delta * (winSec / 4));
   if (isPlaying) playback.seek(seekPos);
 }, { passive: false });
 
 let dragX = 0;
 els.pianoRoll.addEventListener("pointerdown", (e) => {
   if (isLive) return;
+  e.preventDefault();
   seeking = true;
   dragX = e.clientX;
-  els.pianoRoll.setPointerCapture(e.pointerId);
+  try { els.pianoRoll.setPointerCapture(e.pointerId); } catch (_) {}
 });
 els.pianoRoll.addEventListener("pointermove", (e) => {
   if (!seeking || isLive) return;
+  e.preventDefault();
   const dx = e.clientX - dragX;
   dragX = e.clientX;
-  const secPerPx = ROLL.windowSec / (els.pianoRoll.clientWidth - ROLL.keyboardW);
+  const secPerPx = winSec / (els.pianoRoll.clientWidth - ROLL.keyboardW);
   setTransport(seekPos - dx * secPerPx); // drag right => go back in time
 });
 els.pianoRoll.addEventListener("pointerup", releaseSeek);
@@ -298,11 +311,32 @@ els.clickToggle.addEventListener("change", () => {
   clickOn = els.clickToggle.checked;
   if (playback) playback.setClick(clickOn);
 });
+els.synthToggle.addEventListener("change", () => {
+  synthOn = els.synthToggle.checked;
+  if (playback) playback.setSynth(synthOn);
+});
 els.speed.addEventListener("input", () => {
   playbackRate = +els.speed.value;
   els.speedOut.textContent = `${playbackRate.toFixed(1)}×`;
-  if (playback) playback.setRate(playbackRate);
+  if (playback) playback.setRate(playbackRate); // pitch preserved by <audio>
 });
+
+// --- Piano-roll zoom ---
+
+els.zoomHIn.addEventListener("click", () => zoomH(1 / 1.3));
+els.zoomHOut.addEventListener("click", () => zoomH(1.3));
+els.zoomVIn.addEventListener("click", () => zoomV(1.3));
+els.zoomVOut.addEventListener("click", () => zoomV(1 / 1.3));
+
+function zoomH(factor) {
+  winSec = Math.max(2, Math.min(40, winSec * factor));
+  if (!isLive) setTransport(seekPos); // recentre at new span
+  else redrawRoll();
+}
+function zoomV(factor) {
+  vZoom = Math.max(0.3, Math.min(5, vZoom * factor));
+  redrawRoll();
+}
 
 function togglePlay() {
   if (!hasRecording()) return;
@@ -313,8 +347,10 @@ function togglePlay() {
 function startPlayback() {
   const grid = analyzer.getBeatGrid();
   if (grid) playback.setBeat(grid.period, grid.phase);
+  playback.setNotes(notes);
   playback.setRate(playbackRate);
   playback.setClick(clickOn);
+  playback.setSynth(synthOn);
   let from = seekPos;
   if (from >= playback.duration - 0.05) from = 0; // restart if parked at the end
   isPlaying = true;
@@ -410,7 +446,7 @@ function handleStop() {
   setRecordingUI(false);
   if (notes.length) {
     setStatus(
-      latestTime > ROLL.windowSec
+      latestTime > winSec
         ? "Stopped. Scroll or drag the roll to review earlier notes."
         : "Stopped."
     );
@@ -441,26 +477,28 @@ function setLive(live) {
     clearHistoryHighlight();
   } else {
     // Park the transport so the final window is in view, and enable scrolling.
-    seekPos = Math.max(0, latestTime - ROLL.windowSec / 2);
+    seekPos = Math.max(0, latestTime - winSec / 2);
     configureTransport();
     setTransport(seekPos);
     els.rollScrollHint.textContent =
-      latestTime > ROLL.windowSec ? "Scroll, drag, or play back to review." : "";
+      latestTime > winSec ? "Scroll, drag, or play back to review." : "";
   }
 }
 
-/** Called once a recording (mic or file) is decoded and ready for playback. */
-function handleRecordingReady(buffer) {
-  if (!buffer) {
+/** Called once a recording (mic or file) is ready for playback. */
+function handleRecordingReady(info) {
+  if (!info || !info.url) {
     els.playbackControls.hidden = true;
     setStatus("Recording captured, but playback isn’t supported in this browser.");
     return;
   }
   if (!playback) playback = new Playback(analyzer.audioCtx);
-  playback.setBuffer(buffer);
+  playback.setSource(info.url, info.duration);
+  playback.setNotes(notes);
   playback.onEnded = handlePlaybackEnded;
   els.playbackControls.hidden = false;
   els.clickToggle.checked = clickOn;
+  els.synthToggle.checked = synthOn;
   els.speed.value = playbackRate;
   els.speedOut.textContent = `${playbackRate.toFixed(1)}×`;
   configureTransport();
@@ -469,7 +507,7 @@ function handleRecordingReady(buffer) {
 
 /** Window start currently shown: follows "now" when live, else the scroll pos. */
 function currentWinStart() {
-  return isLive ? Math.max(0, latestTime - ROLL.windowSec) : viewStart;
+  return isLive ? Math.max(0, latestTime - winSec) : viewStart;
 }
 
 function redrawRoll() {
@@ -597,7 +635,7 @@ function nearestNoteIndex(time) {
 function syncHistoryToView() {
   if (isLive) { clearHistoryHighlight(); return; }
   const start = currentWinStart();
-  const end = start + ROLL.windowSec;
+  const end = start + winSec;
   const rows = els.historyBody.querySelectorAll("tr[data-start]");
   let firstInView = null;
   rows.forEach((row) => {
@@ -675,12 +713,19 @@ function pitchRange(noteList) {
   }
   lo -= ROLL.pad;
   hi += ROLL.pad;
-  const span = hi - lo;
+  let span = hi - lo;
   if (span < ROLL.minSpan) {
     const extra = Math.ceil((ROLL.minSpan - span) / 2);
     lo -= extra;
     hi += extra;
+    span = hi - lo;
   }
+  // Apply vertical zoom: scale the visible span about its centre. Zooming in
+  // (vZoom > 1) shows fewer semitones with taller lanes; notes outside clip.
+  const center = (lo + hi) / 2;
+  const zoomedSpan = Math.max(5, Math.round(span / vZoom));
+  lo = Math.round(center - zoomedSpan / 2);
+  hi = lo + zoomedSpan;
   return { lo, hi };
 }
 
@@ -700,9 +745,9 @@ function renderPianoRoll(noteList, timing, winStart, tempo) {
   const plotLeft = ROLL.keyboardW;
   const plotW = cssW - plotLeft - 8;
   const start = Math.max(0, winStart);
-  const end = start + ROLL.windowSec;
-  const xOf = (t) => plotLeft + ((t - start) / ROLL.windowSec) * plotW;
-  const pxPerSec = plotW / ROLL.windowSec;
+  const end = start + winSec;
+  const xOf = (t) => plotLeft + ((t - start) / winSec) * plotW;
+  const pxPerSec = plotW / winSec;
 
   const { lo, hi } = pitchRange(noteList);
   const rows = hi - lo + 1;
@@ -865,6 +910,8 @@ function resetState() {
   viewStart = 0;
   playheadTime = 0;
   seekPos = 0;
+  winSec = 8;
+  vZoom = 1;
   isLive = false;
   // Tear down any playback.
   if (playback) playback.stop();

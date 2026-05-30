@@ -1,161 +1,148 @@
-// playback.js — plays back a recorded/loaded AudioBuffer with variable speed and
-// an optional metronome click locked to the beat grid. Exposes a media-time
-// position so the UI can scroll the piano roll in sync.
+// playback.js — plays a recorded/loaded take through an <audio> element so that
+// changing speed preserves pitch (HTMLMediaElement.preservesPitch). A Web-Audio
+// scheduler adds an optional metronome click and an optional synthesized piano
+// voice for the detected MIDI notes, both locked to the audio's media clock.
 
 export class Playback {
   constructor(audioCtx) {
     this.ctx = audioCtx;
-    this.buffer = null;
-    this.source = null;
-    this.gain = null;
+    this.audio = new Audio();
+    this.audio.preservesPitch = true;
+    this.audio.mozPreservesPitch = true;
+    this.audio.webkitPreservesPitch = true;
+    this.audio.addEventListener("ended", () => {
+      this.running = false;
+      this._stopScheduler();
+      if (this.onEnded) this.onEnded();
+    });
 
-    this.running = false;
+    this.duration = 0;
     this.rate = 1;
+    this.running = false;
+
     this.clickOn = false;
+    this.synthOn = false;
+    this.period = 0;
+    this.phase = 0;
+    this.notes = [];
 
-    this.period = 0;   // beat period (s); 0 = no click
-    this.phase = 0;    // beat grid phase (s)
-
-    this.startClock = 0;   // ctx time when the current segment started
-    this.startOffset = 0;  // media time at that moment
-    this.nextBeat = 0;     // media time of the next scheduled click
     this.schedId = null;
+    this.nextBeat = Infinity;
+    this.noteCursor = 0;
 
-    this.onEnded = null;   // () => void, fired when playback finishes/stops
+    this.onEnded = null;
   }
 
-  setBuffer(buffer) {
-    this.buffer = buffer;
-    this.startOffset = 0;
-  }
-
-  setBeat(period, phase) {
-    this.period = period || 0;
-    this.phase = phase || 0;
-    if (this.running) this._resetClickPointer();
-  }
-
-  setClick(on) {
-    this.clickOn = on;
-    if (this.running && on) this._resetClickPointer();
+  setSource(url, duration) {
+    this.audio.src = url;
+    this.duration = duration || 0;
   }
 
   setRate(rate) {
-    if (this.running) {
-      // Rebase so position() stays continuous across the rate change.
-      this.startOffset = this.position();
-      this.startClock = this.ctx.currentTime;
-      this.rate = rate;
-      if (this.source) this.source.playbackRate.value = rate;
-      this._resetClickPointer();
-    } else {
-      this.rate = rate;
-    }
+    this.rate = rate;
+    this.audio.playbackRate = rate;
+    this.audio.preservesPitch = true;
+    this.audio.mozPreservesPitch = true;
+    this.audio.webkitPreservesPitch = true;
+    if (this.running) this._initSchedule();
   }
 
-  get duration() {
-    return this.buffer ? this.buffer.duration : 0;
-  }
+  setClick(on) { this.clickOn = on; if (this.running) this._initSchedule(); }
+  setSynth(on) { this.synthOn = on; if (this.running) this._initSchedule(); }
+  setBeat(period, phase) { this.period = period || 0; this.phase = phase || 0; if (this.running) this._initSchedule(); }
+  setNotes(notes) { this.notes = notes.slice().sort((a, b) => a.startTime - b.startTime); }
 
-  /** Current media-time position in seconds. */
-  position() {
-    if (!this.running) return this.startOffset;
-    const p = this.startOffset + (this.ctx.currentTime - this.startClock) * this.rate;
-    return Math.min(p, this.duration);
-  }
+  position() { return this.audio.currentTime || 0; }
 
   play(from = 0) {
-    if (!this.buffer) return;
-    this._teardown();
-    this.startOffset = Math.max(0, Math.min(from, this.duration));
-
-    this.source = this.ctx.createBufferSource();
-    this.source.buffer = this.buffer;
-    this.source.playbackRate.value = this.rate;
-    this.gain = this.ctx.createGain();
-    this.source.connect(this.gain).connect(this.ctx.destination);
-
-    this.startClock = this.ctx.currentTime;
-    this.source.onended = () => {
-      // Only treat as finished if we actually reached the end (not a manual stop).
-      if (this.running && this.position() >= this.duration - 0.06) this._finish();
-    };
-    this.source.start(0, this.startOffset);
+    if (!this.audio.src) return;
+    if (from >= this.duration - 0.05) from = 0;
+    try { this.audio.currentTime = from; } catch (_) {}
+    this.setRate(this.rate);
+    const p = this.audio.play();
+    if (p && p.catch) p.catch(() => {});
     this.running = true;
-    this._resetClickPointer();
-    this._scheduleLoop();
+    this._initSchedule();
+    this._startScheduler();
   }
 
-  /** Pause and remember the position. */
   pause() {
-    if (!this.running) return;
-    const pos = this.position();
-    this._teardown();
+    this.audio.pause();
     this.running = false;
-    this.startOffset = pos;
+    this._stopScheduler();
   }
 
-  /** Seek to a media time, preserving play/pause state. */
   seek(t) {
-    const wasRunning = this.running;
-    this._teardown();
-    this.running = false;
-    this.startOffset = Math.max(0, Math.min(t, this.duration));
-    if (wasRunning) this.play(this.startOffset);
+    try { this.audio.currentTime = Math.max(0, Math.min(t, this.duration)); } catch (_) {}
+    if (this.running) this._initSchedule();
   }
 
   stop() {
-    const wasRunning = this.running;
-    this._teardown();
+    const was = this.running;
+    this.audio.pause();
+    try { this.audio.currentTime = 0; } catch (_) {}
     this.running = false;
-    this.startOffset = 0;
-    if (wasRunning && this.onEnded) this.onEnded();
+    this._stopScheduler();
+    if (was && this.onEnded) this.onEnded();
   }
 
-  _finish() {
-    this._teardown();
-    this.running = false;
-    this.startOffset = 0;
-    if (this.onEnded) this.onEnded();
-  }
-
-  _teardown() {
-    if (this.source) {
-      try { this.source.onended = null; this.source.stop(); } catch (_) {}
-      try { this.source.disconnect(); } catch (_) {}
-      this.source = null;
+  // Reset the click/note pointers to the current media position.
+  _initSchedule() {
+    const pos = this.position();
+    if (this.period > 0) {
+      const k = Math.ceil((pos - this.phase) / this.period);
+      this.nextBeat = this.phase + k * this.period;
+    } else {
+      this.nextBeat = Infinity;
     }
+    this.noteCursor = 0;
+    while (this.noteCursor < this.notes.length && this.notes[this.noteCursor].startTime < pos) {
+      this.noteCursor++;
+    }
+  }
+
+  _startScheduler() {
+    this._stopScheduler();
+    this.schedId = setInterval(() => this._tick(), 40);
+  }
+  _stopScheduler() {
     if (this.schedId) { clearInterval(this.schedId); this.schedId = null; }
   }
 
-  _resetClickPointer() {
-    if (!this.period) { this.nextBeat = Infinity; return; }
+  _tick() {
+    if (!this.running) return;
+    const lookahead = 0.25;
     const pos = this.position();
-    const k = Math.ceil((pos - this.phase) / this.period);
-    this.nextBeat = this.phase + k * this.period;
-  }
+    // Realtime (AudioContext clock) corresponding to media time 0.
+    const base = this.ctx.currentTime - pos / this.rate;
+    const horizon = pos + lookahead * this.rate;
+    const minRealtime = this.ctx.currentTime - 0.02;
 
-  // Look-ahead scheduler: queue click sounds slightly before they're due.
-  _scheduleLoop() {
-    const lookahead = 0.2;
-    this.schedId = setInterval(() => {
-      if (!this.running || !this.clickOn || this.period <= 0) return;
-      while (this.nextBeat < this.duration) {
-        const realtime = this.startClock + (this.nextBeat - this.startOffset) / this.rate;
-        if (realtime > this.ctx.currentTime + lookahead) break;
-        if (realtime >= this.ctx.currentTime - 0.05) {
-          const beatIndex = Math.round((this.nextBeat - this.phase) / this.period);
-          this._click(realtime, beatIndex);
+    if (this.clickOn && this.period > 0) {
+      while (this.nextBeat < this.duration && this.nextBeat <= horizon) {
+        const realtime = base + this.nextBeat / this.rate;
+        if (realtime > minRealtime) {
+          this._click(realtime, Math.round((this.nextBeat - this.phase) / this.period));
         }
         this.nextBeat += this.period;
       }
-    }, 40);
+    }
+
+    if (this.synthOn) {
+      while (this.noteCursor < this.notes.length && this.notes[this.noteCursor].startTime <= horizon) {
+        const n = this.notes[this.noteCursor];
+        const realtime = base + n.startTime / this.rate;
+        const dur = Math.max(0.08, n.endTime - n.startTime) / this.rate;
+        if (realtime > minRealtime) this._note(realtime, n.midi, dur);
+        this.noteCursor++;
+      }
+    }
   }
 
   _click(time, beatIndex) {
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
-    const accent = ((beatIndex % 4) + 4) % 4 === 0; // accent every 4th beat
+    const accent = ((beatIndex % 4) + 4) % 4 === 0;
     osc.frequency.value = accent ? 1600 : 1000;
     g.gain.setValueAtTime(0.0001, time);
     g.gain.exponentialRampToValueAtTime(accent ? 0.5 : 0.3, time + 0.001);
@@ -163,5 +150,33 @@ export class Playback {
     osc.connect(g).connect(this.ctx.destination);
     osc.start(time);
     osc.stop(time + 0.06);
+  }
+
+  // A simple plucked/piano-ish voice: triangle fundamental + a softer octave,
+  // with a fast attack and exponential decay.
+  _note(time, midi, dur) {
+    const freq = 440 * Math.pow(2, (midi - 69) / 12);
+    const out = this.ctx.createGain();
+    out.connect(this.ctx.destination);
+    const peak = 0.16;
+    const end = time + Math.min(dur + 0.35, 3.5);
+    out.gain.setValueAtTime(0.0001, time);
+    out.gain.exponentialRampToValueAtTime(peak, time + 0.006);
+    out.gain.exponentialRampToValueAtTime(0.0001, end);
+
+    const o1 = this.ctx.createOscillator();
+    o1.type = "triangle";
+    o1.frequency.value = freq;
+    o1.connect(out);
+
+    const o2 = this.ctx.createOscillator();
+    o2.type = "sine";
+    o2.frequency.value = freq * 2;
+    const g2 = this.ctx.createGain();
+    g2.gain.value = 0.3;
+    o2.connect(g2).connect(out);
+
+    o1.start(time); o2.start(time);
+    o1.stop(end + 0.05); o2.stop(end + 0.05);
   }
 }
