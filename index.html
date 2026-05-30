@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>Intonation — Pitch, BPM &amp; Rhythm Analyzer</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Intonation</h1>
+    <p class="tagline">Real-time pitch, tempo &amp; rhythm analysis</p>
+  </header>
+
+  <main>
+    <!-- Controls -->
+    <section class="controls" aria-label="Controls">
+      <button id="micBtn" class="btn btn-primary">
+        <span class="dot" aria-hidden="true"></span>
+        Start microphone
+      </button>
+
+      <label for="fileInput" class="btn btn-secondary">
+        Upload audio file
+        <input id="fileInput" type="file" accept="audio/*" hidden />
+      </label>
+
+      <button id="resetBtn" class="btn btn-ghost" disabled>Reset</button>
+
+      <div class="ref-control">
+        <label for="refPitch">A4</label>
+        <input id="refPitch" type="number" min="400" max="480" step="1" value="440" />
+        <span>Hz</span>
+      </div>
+    </section>
+
+    <p id="status" class="status" role="status">Idle — start the microphone or upload a file.</p>
+
+    <!-- Live readouts -->
+    <section class="live-grid">
+      <div class="card live-pitch">
+        <h2>Pitch</h2>
+        <div class="note-display">
+          <span id="noteName" class="note-name">—</span>
+          <span id="noteOctave" class="note-octave"></span>
+        </div>
+        <div class="cents-meter" aria-hidden="true">
+          <div class="cents-scale">
+            <span>-50</span><span>0</span><span>+50</span>
+          </div>
+          <div class="cents-track">
+            <div class="cents-zero"></div>
+            <div id="centsNeedle" class="cents-needle"></div>
+          </div>
+        </div>
+        <div id="centsValue" class="cents-value">— cents</div>
+        <div id="freqValue" class="freq-value">— Hz</div>
+      </div>
+
+      <div class="card live-bpm">
+        <h2>Tempo</h2>
+        <div id="bpmValue" class="bpm-value">—</div>
+        <div class="bpm-unit">BPM</div>
+        <div id="beatPulse" class="beat-pulse" aria-hidden="true"></div>
+        <div id="confidence" class="confidence">confidence: —</div>
+        <div class="tempo-controls">
+          <button id="tapBtn" class="btn btn-ghost btn-sm" title="Tap or press Enter to set the tempo">Tap tempo ⏎</button>
+          <button id="clearTempoBtn" class="btn btn-ghost btn-sm" hidden>Auto</button>
+          <div class="tempo-bounds">
+            <label for="bpmMin">min</label>
+            <input id="bpmMin" type="number" min="20" max="300" step="1" value="50" />
+            <label for="bpmMax">max</label>
+            <input id="bpmMax" type="number" min="20" max="300" step="1" value="210" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Piano roll -->
+    <section class="card">
+      <div class="score-head">
+        <h2>Piano roll</h2>
+        <div class="strictness">
+          <label for="pitchStrict">Pitch strictness</label>
+          <input id="pitchStrict" type="range" min="0" max="100" value="50" />
+          <output id="pitchStrictOut">medium</output>
+          <label for="rhythmStrict">Rhythm strictness</label>
+          <input id="rhythmStrict" type="range" min="0" max="100" value="50" />
+          <output id="rhythmStrictOut">medium</output>
+        </div>
+      </div>
+      <p class="hint">
+        Hollow bars show the perfect target (pitch lane &amp; beat). Coloured bars show
+        your performance, offset <strong>left/right</strong> for early/late and
+        <strong>up/down</strong> within the lane for sharp/flat.
+        <span class="legend">
+          <i class="sw good"></i>accurate <i class="sw warn"></i>close <i class="sw bad"></i>way&nbsp;off
+        </span>
+      </p>
+      <div class="zoom-bar">
+        <span class="zoom-label">Zoom</span>
+        <div class="zoom-group" role="group" aria-label="Horizontal zoom">
+          <span class="zoom-axis">time</span>
+          <button id="zoomHOut" class="btn btn-ghost btn-sm" title="Zoom out (more time)">−</button>
+          <button id="zoomHIn" class="btn btn-ghost btn-sm" title="Zoom in (less time)">+</button>
+        </div>
+        <div class="zoom-group" role="group" aria-label="Vertical zoom">
+          <span class="zoom-axis">pitch</span>
+          <button id="zoomVOut" class="btn btn-ghost btn-sm" title="Zoom out (more notes)">−</button>
+          <button id="zoomVIn" class="btn btn-ghost btn-sm" title="Zoom in (fewer notes)">+</button>
+        </div>
+      </div>
+      <canvas id="pianoRoll" class="pianoroll" height="320"></canvas>
+      <div class="roll-scrollbar">
+        <span id="playTime" class="play-time">0:00</span>
+        <input id="rollScroll" type="range" min="0" max="0" step="0.05" value="0" disabled />
+        <span id="rollScrollHint" class="roll-hint">Stop the mic to scroll back through the performance.</span>
+      </div>
+
+      <div id="playbackControls" class="playback-controls" hidden>
+        <button id="playBtn" class="btn btn-primary btn-sm">▶ Play</button>
+        <label class="click-toggle">
+          <input id="clickToggle" type="checkbox" /> Click track
+        </label>
+        <label class="click-toggle">
+          <input id="synthToggle" type="checkbox" /> MIDI notes
+        </label>
+        <div class="speed-control">
+          <label for="speed">Speed</label>
+          <input id="speed" type="range" min="0.3" max="2" step="0.1" value="1" />
+          <output id="speedOut">1.0×</output>
+        </div>
+      </div>
+    </section>
+
+    <!-- Worst offenders -->
+    <section class="offenders">
+      <div class="card">
+        <h2>Most out of tune</h2>
+        <ol id="outOfTune" class="offender-list">
+          <li class="empty">No notes analyzed yet.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h2>Most out of time</h2>
+        <ol id="outOfTime" class="offender-list">
+          <li class="empty">No onsets analyzed yet.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Note history -->
+    <section class="card">
+      <h2>Note history</h2>
+      <div class="table-wrap">
+        <table id="historyTable" class="history">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Note</th>
+              <th>Freq</th>
+              <th>Tuning</th>
+              <th>Timing</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="empty"><td colspan="5">Nothing yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>All analysis runs locally in your browser. No audio leaves your device.</p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

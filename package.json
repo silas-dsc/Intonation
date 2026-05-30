@@ -1,0 +1,13 @@
+{
+  "name": "intonation",
+  "version": "1.0.0",
+  "description": "Mobile-friendly web app for real-time pitch, BPM and rhythm analysis from the microphone or an audio file.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test"
+  },
+  "keywords": ["audio", "pitch", "tuner", "bpm", "tempo", "rhythm", "web-audio"],
+  "license": "MIT"
+}
