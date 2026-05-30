@@ -1,5 +1,5 @@
 // app.js — UI controller: wires controls to the Analyzer and renders live
-// readouts, the rhythm timeline, worst-offender lists and the note history.
+// readouts, the piano-roll view, worst-offender lists and the note history.
 
 import { Analyzer } from "./analyzer.js";
 import { frequencyToNote } from "./pitch.js";
@@ -10,7 +10,6 @@ import {
   strictnessLabel,
   worseClass,
 } from "./tolerance.js";
-import { midiToStaff, STAFF_REF } from "./staff.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -28,7 +27,7 @@ const els = {
   bpmValue: $("bpmValue"),
   beatPulse: $("beatPulse"),
   confidence: $("confidence"),
-  score: $("score"),
+  pianoRoll: $("pianoRoll"),
   pitchStrict: $("pitchStrict"),
   rhythmStrict: $("rhythmStrict"),
   pitchStrictOut: $("pitchStrictOut"),
@@ -123,7 +122,7 @@ function updateStrictness() {
   renderHistory();
   renderOutOfTune();
   renderOutOfTime();
-  renderScore(notes, lastTiming, latestTime, lastTempo);
+  renderPianoRoll(notes, lastTiming, latestTime, lastTempo);
 }
 
 // ---------- Event handlers ----------
@@ -151,7 +150,7 @@ function handleFrame(data) {
   // Refresh timing analysis periodically and redraw the score.
   const res = analyzer.analyzeTimingNow();
   if (res.timing.length) lastTiming = res.timing;
-  renderScore(notes, lastTiming, data.time, data.tempo);
+  renderPianoRoll(notes, lastTiming, data.time, data.tempo);
   renderOutOfTime();
 }
 
@@ -257,20 +256,52 @@ function timingForNote(n) {
   return best;
 }
 
-// --- Grand-staff score rendering ---
+// --- Piano-roll rendering ---
 
-const SCORE = {
-  height: 300,
-  leftMargin: 56,   // reserved for clefs
-  u: 7,             // pixels per diatonic step (half a line gap)
+const ROLL = {
+  height: 320,
+  keyboardW: 40,    // left gutter showing the piano keyboard
   windowSec: 8,
+  defaultLow: 48,   // C3 — used before any notes are detected
+  defaultHigh: 72,  // C5
+  minSpan: 18,      // keep at least ~1.5 octaves visible
+  pad: 2,           // semitones of headroom above/below the played range
 };
 
-function renderScore(noteList, timing, now, tempo) {
-  const canvas = els.score;
+const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
+
+function isBlackKey(midi) {
+  return BLACK_KEYS.has(((midi % 12) + 12) % 12);
+}
+
+/** Pick the visible MIDI range from the notes on screen (with padding). */
+function pitchRange(noteList) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const n of noteList) {
+    if (n.midi < lo) lo = n.midi;
+    if (n.midi > hi) hi = n.midi;
+  }
+  if (!isFinite(lo)) {
+    lo = ROLL.defaultLow;
+    hi = ROLL.defaultHigh;
+  }
+  lo -= ROLL.pad;
+  hi += ROLL.pad;
+  const span = hi - lo;
+  if (span < ROLL.minSpan) {
+    const extra = Math.ceil((ROLL.minSpan - span) / 2);
+    lo -= extra;
+    hi += extra;
+  }
+  return { lo, hi };
+}
+
+function renderPianoRoll(noteList, timing, now, tempo) {
+  const canvas = els.pianoRoll;
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || 600;
-  const cssH = SCORE.height;
+  const cssH = ROLL.height;
   if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
     canvas.width = cssW * dpr;
     canvas.height = cssH * dpr;
@@ -279,148 +310,146 @@ function renderScore(noteList, timing, now, tempo) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
-  const u = SCORE.u;
-  const midY = cssH / 2;
-  // Convert a diatonic staff step to a y coordinate (higher step = higher up).
-  const yOf = (step) => midY - (step - STAFF_REF.middleC) * u;
+  const plotLeft = ROLL.keyboardW;
+  const plotW = cssW - plotLeft - 8;
+  const start = Math.max(0, now - ROLL.windowSec);
+  const xOf = (t) => plotLeft + ((t - start) / ROLL.windowSec) * plotW;
+  const pxPerSec = plotW / ROLL.windowSec;
 
-  const plotLeft = SCORE.leftMargin;
-  const plotW = cssW - plotLeft - 12;
-  const start = Math.max(0, now - SCORE.windowSec);
-  const xOf = (t) => plotLeft + ((t - start) / SCORE.windowSec) * plotW;
+  const { lo, hi } = pitchRange(noteList);
+  const rows = hi - lo + 1;
+  const rowH = cssH / rows;
+  // Top edge of a MIDI note's lane (higher pitch = higher on screen).
+  const laneTop = (midi) => (hi - midi) * rowH;
+  const laneMid = (midi) => laneTop(midi) + rowH / 2;
 
-  drawStaffLines(ctx, yOf, plotLeft, cssW);
-  drawClefs(ctx, yOf);
+  drawLanes(ctx, lo, hi, rowH, laneTop, plotLeft, cssW);
+  drawKeyboard(ctx, lo, hi, rowH, laneTop);
 
-  // Beat grid as light barlines.
+  // Beat grid as light vertical barlines.
   if (tempo && tempo.beatPeriod > 0) {
-    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
     ctx.lineWidth = 1;
     const first = Math.ceil(start / tempo.beatPeriod) * tempo.beatPeriod;
     for (let t = first; t <= now; t += tempo.beatPeriod) {
       const x = xOf(t);
       ctx.beginPath();
-      ctx.moveTo(x, yOf(STAFF_REF.trebleTop) - 8);
-      ctx.lineTo(x, yOf(STAFF_REF.bassBottom) + 8);
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, cssH);
       ctx.stroke();
     }
   }
 
-  // Notes.
+  // Clip note drawing to the plot area so bars don't spill over the keyboard.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(plotLeft, 0, cssW - plotLeft, cssH);
+  ctx.clip();
+
+  const barH = Math.max(4, rowH * 0.5);
   for (const n of noteList) {
+    if (n.midi < lo || n.midi > hi) continue;
     const timingEntry = timing.length ? timingForNote(n) : null;
     const errorMs = timingEntry ? timingEntry.errorMs : 0;
-    // Perfect rhythm position = the grid slot this note was nearest to.
-    const perfectTime = n.startTime - errorMs / 1000;
-    if (perfectTime < start) continue;
 
-    const { step, sharp } = midiToStaff(n.midi);
-    const perfectX = xOf(perfectTime);
-    const perfectY = yOf(step);
-
-    // Offsets: right = late, left = early; up = sharp, down = flat. Magnified
-    // and clamped so small errors are still visible without overlapping.
-    const dx = clamp(errorMs * 0.25, -34, 34);
-    const dy = clamp(-n.cents * 0.28, -3 * u, 3 * u);
+    const perfectTime = n.startTime - errorMs / 1000; // nearest beat slot
+    const dur = Math.max(0.08, n.endTime - n.startTime);
+    const w = Math.max(6, dur * pxPerSec);
+    if (xOf(n.startTime) + w < plotLeft || perfectTime > now) continue;
 
     const pitchClass = classify(Math.abs(n.cents), pitchTol);
     const timingClass = timingEntry ? classify(Math.abs(errorMs), rhythmTol) : "good";
     const overall = worseClass(pitchClass, timingClass);
 
-    drawLedgerLines(ctx, step, perfectX, yOf, plotLeft);
-    // Perfect target: hollow grey note.
-    drawNotehead(ctx, perfectX, perfectY, u, { fill: false, color: "rgba(200,210,225,0.45)", sharp });
-    // Actual performance: filled, colour-coded, offset from target.
-    if (dx !== 0 || dy !== 0 || overall !== "good") {
+    // Perfect target: hollow bar at the exact lane and quantized beat time.
+    const targetX = xOf(perfectTime);
+    const targetY = laneMid(n.midi) - barH / 2;
+    ctx.strokeStyle = "rgba(200,210,225,0.45)";
+    ctx.lineWidth = 1.4;
+    roundRect(ctx, targetX, targetY, w, barH, 3);
+    ctx.stroke();
+
+    // Actual performance: coloured bar. Horizontal = real onset (early/late);
+    // vertical = cents offset within the lane (sharp up, flat down, 1 semitone
+    // = one full lane).
+    const dy = clamp((-n.cents / 100) * rowH, -rowH, rowH);
+    const actualX = xOf(n.startTime);
+    const actualY = laneMid(n.midi) + dy - barH / 2;
+    ctx.fillStyle = HEX_COLOR[overall];
+    roundRect(ctx, actualX, actualY, w, barH, 3);
+    ctx.fill();
+
+    // Connector showing the error vector when off target.
+    if (overall !== "good") {
       ctx.strokeStyle = HEX_COLOR[overall];
       ctx.globalAlpha = 0.5;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.moveTo(perfectX, perfectY);
-      ctx.lineTo(perfectX + dx, perfectY + dy);
+      ctx.moveTo(targetX, laneMid(n.midi));
+      ctx.lineTo(actualX, laneMid(n.midi) + dy);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    drawNotehead(ctx, perfectX + dx, perfectY + dy, u, { fill: true, color: HEX_COLOR[overall], sharp: false });
   }
+  ctx.restore();
 
   // "Now" cursor.
   ctx.strokeStyle = "rgba(124,92,255,0.7)";
   ctx.lineWidth = 2;
   const nx = xOf(now);
   ctx.beginPath();
-  ctx.moveTo(nx, yOf(STAFF_REF.trebleTop) - 8);
-  ctx.lineTo(nx, yOf(STAFF_REF.bassBottom) + 8);
+  ctx.moveTo(nx, 0);
+  ctx.lineTo(nx, cssH);
   ctx.stroke();
 }
 
-function drawStaffLines(ctx, yOf, plotLeft, cssW) {
-  ctx.strokeStyle = "rgba(255,255,255,0.28)";
-  ctx.lineWidth = 1;
-  // Treble: E4,G4,B4,D5,F5 (steps 30,32,34,36,38); Bass: G2..A3 (18,20,22,24,26).
-  const lines = [30, 32, 34, 36, 38, 18, 20, 22, 24, 26];
-  for (const step of lines) {
-    const y = Math.round(yOf(step)) + 0.5;
-    ctx.beginPath();
-    ctx.moveTo(plotLeft - 8, y);
-    ctx.lineTo(cssW - 8, y);
-    ctx.stroke();
+function drawLanes(ctx, lo, hi, rowH, laneTop, plotLeft, cssW) {
+  for (let midi = lo; midi <= hi; midi++) {
+    const y = laneTop(midi);
+    // Slightly darken black-key lanes for a familiar piano-roll look.
+    ctx.fillStyle = isBlackKey(midi) ? "rgba(0,0,0,0.22)" : "rgba(255,255,255,0.015)";
+    ctx.fillRect(plotLeft, y, cssW - plotLeft - 8, rowH);
+    // A faint line at each octave boundary (below C).
+    if (midi % 12 === 0) {
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.lineWidth = 1;
+      const ly = Math.round(y + rowH) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(plotLeft, ly);
+      ctx.lineTo(cssW - 8, ly);
+      ctx.stroke();
+    }
   }
 }
 
-function drawClefs(ctx, yOf) {
-  ctx.fillStyle = "rgba(230,236,243,0.85)";
-  ctx.textBaseline = "alphabetic";
-  // Treble clef glyph anchored around the G4 line (step 32).
-  ctx.font = "52px serif";
-  ctx.fillText("\u{1D11E}", 10, yOf(32) + 28);
-  // Bass clef glyph anchored around the F3 line (step 24).
-  ctx.font = "44px serif";
-  ctx.fillText("\u{1D122}", 12, yOf(24) + 8);
+function drawKeyboard(ctx, lo, hi, rowH, laneTop) {
+  for (let midi = lo; midi <= hi; midi++) {
+    const y = laneTop(midi);
+    const black = isBlackKey(midi);
+    ctx.fillStyle = black ? "#202632" : "#cdd5e0";
+    ctx.fillRect(0, y, ROLL.keyboardW - 2, rowH);
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(0, y + 0.5, ROLL.keyboardW - 2, rowH);
+    // Label each C with its octave.
+    if (midi % 12 === 0 && rowH >= 8) {
+      ctx.fillStyle = "#0f1115";
+      ctx.font = `${Math.min(10, rowH - 2)}px sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.fillText(`C${midi / 12 - 1}`, 3, y + rowH / 2);
+    }
+  }
 }
 
-function drawLedgerLines(ctx, step, x, yOf, plotLeft) {
-  if (x < plotLeft) return;
-  ctx.strokeStyle = "rgba(255,255,255,0.28)";
-  ctx.lineWidth = 1;
-  const drawAt = (s) => {
-    const y = Math.round(yOf(s)) + 0.5;
-    ctx.beginPath();
-    ctx.moveTo(x - 9, y);
-    ctx.lineTo(x + 9, y);
-    ctx.stroke();
-  };
-  // Above the treble staff (steps > 38, even = lines).
-  for (let s = 40; s <= step; s += 2) drawAt(s);
-  // Below the bass staff (steps < 18).
-  for (let s = 16; s >= step; s -= 2) drawAt(s);
-  // The middle-C ledger line (step 28) between the staves.
-  if (step === 28 || (step < 30 && step > 26)) drawAt(28);
-}
-
-function drawNotehead(ctx, x, y, u, { fill, color, sharp }) {
-  const rx = u * 1.15;
-  const ry = u * 0.85;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(-0.3);
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
-  ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-  if (fill) {
-    ctx.fillStyle = color;
-    ctx.fill();
-  } else {
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = color;
-    ctx.stroke();
-  }
-  ctx.restore();
-  if (sharp) {
-    ctx.fillStyle = color;
-    ctx.font = `${Math.round(u * 2.4)}px serif`;
-    ctx.textBaseline = "middle";
-    ctx.fillText("♯", x - u * 3.4, y);
-  }
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 function clamp(v, lo, hi) {
@@ -445,8 +474,8 @@ function resetState() {
   latestTime = 0;
   renderOutOfTune();
   renderOutOfTime();
-  const ctx = els.score.getContext("2d");
-  ctx.clearRect(0, 0, els.score.width, els.score.height);
+  const ctx = els.pianoRoll.getContext("2d");
+  ctx.clearRect(0, 0, els.pianoRoll.width, els.pianoRoll.height);
 }
 
 function setRecordingUI(recording) {
@@ -461,7 +490,7 @@ function setStatus(msg) {
 // Redraw the score on resize so it stays crisp.
 window.addEventListener("resize", () => {
   if (analyzer.running) return; // live loop already redraws
-  renderScore(notes, lastTiming, latestTime, lastTempo);
+  renderPianoRoll(notes, lastTiming, latestTime, lastTempo);
 });
 
 // Initialise strictness labels.

@@ -1,4 +1,4 @@
-// Tests for the strictness/tolerance math and staff-position mapping.
+// Tests for the strictness/tolerance math used to classify pitch and timing.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,7 +10,6 @@ import {
   strictnessLabel,
   worseClass,
 } from "../js/tolerance.js";
-import { midiToStaff, STAFF_REF } from "../js/staff.js";
 
 test("stricter pitch tolerance is tighter than lenient", () => {
   const strict = pitchTolerance(100);
@@ -48,24 +47,4 @@ test("strictnessLabel covers the slider range", () => {
   assert.equal(strictnessLabel(50), "medium");
   assert.equal(strictnessLabel(70), "strict");
   assert.equal(strictnessLabel(100), "very strict");
-});
-
-test("midiToStaff places middle C on the central ledger step", () => {
-  const c4 = midiToStaff(60);
-  assert.equal(c4.step, STAFF_REF.middleC);
-  assert.equal(c4.sharp, false);
-});
-
-test("midiToStaff spells sharps on the natural's line", () => {
-  const cs4 = midiToStaff(61); // C#4
-  assert.equal(cs4.step, midiToStaff(60).step);
-  assert.equal(cs4.sharp, true);
-});
-
-test("midiToStaff steps increase by 1 per diatonic step", () => {
-  // C4 -> D4 -> E4 are consecutive diatonic steps.
-  assert.equal(midiToStaff(62).step - midiToStaff(60).step, 1); // D4 - C4
-  assert.equal(midiToStaff(64).step - midiToStaff(62).step, 1); // E4 - D4
-  // E4 is the bottom line of the treble staff.
-  assert.equal(midiToStaff(64).step, STAFF_REF.trebleBottom);
 });

@@ -16,10 +16,11 @@ leaves your device, and there are no runtime dependencies.
   meter showing the deviation in **cents** (color-coded: green ≤5¢, yellow ≤20¢,
   red beyond).
 - 🥁 **Live tempo** — estimated BPM with a confidence indicator and a beat pulse.
-- 🎼 **Colourful score view** — a grand staff (treble + bass clefs) where every
-  note is drawn twice: a **hollow target** at its perfect pitch and beat
-  position, and a **coloured overlay** showing what you actually played, nudged
-  **left/right** for early/late and **up/down** for sharp/flat. Colour encodes
+- 🎹 **Colourful piano roll** — a scrolling pitch-vs-time view with a piano
+  keyboard gutter. Every note is drawn twice: a **hollow target** bar at its
+  perfect pitch lane and beat position, and a **coloured overlay** bar showing
+  what you actually played, offset **left/right** for early/late and **up/down**
+  within the lane for sharp/flat (one semitone = one lane). Colour encodes
   accuracy: green = accurate, yellow = close, red = way off.
 - 🎚️ **Strictness controls** — independent pitch and rhythm sliders set how much
   leeway counts as "accurate". They drive the score colours, the worst-offender
@@ -66,9 +67,8 @@ detection, tempo estimation and timing-error analysis.
 | Tempo (BPM) | **Autocorrelation of the onset-strength envelope**, searching musical lags (50–210 BPM) and folding octave errors | `js/rhythm.js` |
 | Timing | Fits a beat grid (best phase offset, eighth-note resolution) and reports each onset's error in ms | `js/rhythm.js` |
 | Strictness → colours | Maps each slider (0–100) to cents/ms thresholds for the green/yellow/red buckets | `js/tolerance.js` |
-| Staff layout | Maps MIDI notes to diatonic grand-staff positions (incl. sharps) | `js/staff.js` |
 | Audio graph & loop | `AnalyserNode` polled per animation frame; mic input is not routed to the speakers (no feedback), file input is | `js/analyzer.js` |
-| UI & rendering | Live readouts, grand-staff score, offender lists, history table | `js/app.js` |
+| UI & rendering | Live readouts, piano-roll view, offender lists, history table | `js/app.js` |
 
 ## Notes & limitations
 

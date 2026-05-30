@@ -67,10 +67,10 @@
       </div>
     </section>
 
-    <!-- Score view -->
+    <!-- Piano roll -->
     <section class="card">
       <div class="score-head">
-        <h2>Score view</h2>
+        <h2>Piano roll</h2>
         <div class="strictness">
           <label for="pitchStrict">Pitch strictness</label>
           <input id="pitchStrict" type="range" min="0" max="100" value="50" />
@@ -81,13 +81,14 @@
         </div>
       </div>
       <p class="hint">
-        Hollow notes show the perfect target. Coloured notes show your performance,
-        nudged <strong>left/right</strong> for early/late and <strong>up/down</strong> for sharp/flat.
+        Hollow bars show the perfect target (pitch lane &amp; beat). Coloured bars show
+        your performance, offset <strong>left/right</strong> for early/late and
+        <strong>up/down</strong> within the lane for sharp/flat.
         <span class="legend">
           <i class="sw good"></i>accurate <i class="sw warn"></i>close <i class="sw bad"></i>way&nbsp;off
         </span>
       </p>
-      <canvas id="score" class="score" height="300"></canvas>
+      <canvas id="pianoRoll" class="pianoroll" height="320"></canvas>
     </section>
 
     <!-- Worst offenders -->

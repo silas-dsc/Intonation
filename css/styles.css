@@ -249,8 +249,8 @@ body {
 }
 .confidence { font-size: 0.75rem; color: var(--text-dim); }
 
-/* Score view */
-.score {
+/* Piano roll */
+.pianoroll {
   width: 100%;
   display: block;
   background: var(--bg-elev);
