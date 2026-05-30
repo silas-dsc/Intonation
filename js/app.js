@@ -82,6 +82,7 @@ let synthOn = false;
 // scales the auto-fitted semitone span (higher = more zoomed in / taller lanes).
 let winSec = 8;
 let vZoom = 1;
+let vCenter = null;  // eased vertical centre (MIDI) for smooth pitch-follow
 
 // Accuracy thresholds, driven by the strictness sliders.
 let pitchTol = pitchTolerance(50);
@@ -748,16 +749,22 @@ function pitchRange(noteList) {
 
   // Vertical zoom: show fewer semitones (taller lanes) when zoomed in.
   const zoomedSpan = Math.max(5, Math.round(span / vZoom));
-  if (zoomedSpan >= span) return { lo: loFull, hi: hiFull }; // everything fits
+  if (zoomedSpan >= span) {
+    vCenter = (loFull + hiFull) / 2; // reset so re-zoom eases from the middle
+    return { center: (loFull + hiFull) / 2, span }; // everything fits
+  }
 
   // Centre the window on the pitch under the playhead (falling back to the
-  // overall centre), then clamp so it stays within the performed range.
+  // overall centre). The centre is eased while playing/recording for a smooth
+  // glide, and snapped when paused so zoom/seek frames land instantly.
   const focus = focusMidi(noteList, playheadTime);
-  const center = focus != null ? focus : (loFull + hiFull) / 2;
-  let lo = Math.round(center - zoomedSpan / 2);
-  if (lo < loFull) lo = loFull;
-  if (lo + zoomedSpan > hiFull) lo = hiFull - zoomedSpan;
-  return { lo, hi: lo + zoomedSpan };
+  let target = focus != null ? focus : (loFull + hiFull) / 2;
+  // Keep the window within the performed range.
+  target = Math.max(loFull + zoomedSpan / 2, Math.min(hiFull - zoomedSpan / 2, target));
+  if (vCenter == null) vCenter = target;
+  vCenter += (isPlaying || isLive) ? (target - vCenter) * 0.15 : (target - vCenter);
+
+  return { center: vCenter, span: zoomedSpan };
 }
 
 /** Mean pitch of notes sounding at `time` (else the nearest note in time). */
@@ -797,12 +804,15 @@ function renderPianoRoll(noteList, timing, winStart, tempo) {
   const xOf = (t) => plotLeft + ((t - start) / winSec) * plotW;
   const pxPerSec = plotW / winSec;
 
-  const { lo, hi } = pitchRange(noteList);
-  const rows = hi - lo + 1;
-  const rowH = cssH / rows;
-  // Top edge of a MIDI note's lane (higher pitch = higher on screen).
-  const laneTop = (midi) => (hi - midi) * rowH;
-  const laneMid = (midi) => laneTop(midi) + rowH / 2;
+  // Centre-based vertical mapping (fractional centre allows smooth scrolling).
+  const { center, span } = pitchRange(noteList);
+  const rowH = cssH / span;
+  // Higher pitch = higher on screen; centre maps to the canvas mid-line.
+  const laneMid = (midi) => cssH / 2 - (midi - center) * rowH;
+  const laneTop = (midi) => laneMid(midi) - rowH / 2;
+  // Integer lanes covering the viewport (a little overscan for partial edges).
+  const lo = Math.floor(center - span / 2) - 1;
+  const hi = Math.ceil(center + span / 2) + 1;
 
   drawLanes(ctx, lo, hi, rowH, laneTop, plotLeft, cssW);
   drawKeyboard(ctx, lo, hi, rowH, laneTop);
@@ -960,6 +970,7 @@ function resetState() {
   seekPos = 0;
   winSec = 8;
   vZoom = 1;
+  vCenter = null;
   isLive = false;
   // Tear down any playback.
   if (playback) playback.stop();
