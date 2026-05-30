@@ -2,17 +2,24 @@
 // loop, emitting live pitch / tempo / onset events to the UI layer.
 
 import { detectPitch, NoteTracker } from "./pitch.js";
-import { OnsetDetector, estimateTempo, analyzeTiming, smoothBpm } from "./rhythm.js";
+import { OnsetDetector, estimateTempo, analyzeTiming, smoothBpm, beatGrid } from "./rhythm.js";
 
 const FFT_SIZE = 2048;
 
 export class Analyzer {
-  constructor({ a4 = 440, onFrame, onNote, onOnset, onStop } = {}) {
+  constructor({ a4 = 440, onFrame, onNote, onOnset, onStop, onRecordingReady } = {}) {
     this.a4 = a4;
     this.onFrame = onFrame;   // (frameData) => void  — every animation frame
     this.onNote = onNote;     // (note) => void       — when a note completes
     this.onOnset = onOnset;   // (time) => void       — when an onset is detected
     this.onStop = onStop;     // () => void           — when analysis stops
+    this.onRecordingReady = onRecordingReady; // (AudioBuffer|null) => void
+
+    // Captured audio for later playback (mic via MediaRecorder, files directly).
+    this.recordedBuffer = null;
+    this.recorder = null;
+    this.chunks = [];
+    this.discardRecording = false; // set on reset to drop an in-flight decode
 
     // Tempo state: smoothed auto-detected BPM, optional manual (tapped) BPM,
     // and the detection bounds.
@@ -65,6 +72,13 @@ export class Analyzer {
     };
   }
 
+  /** Beat grid (period + phase) for the click track, from the current tempo. */
+  getBeatGrid() {
+    const tempo = this._effectiveTempo();
+    if (!tempo) return null;
+    return beatGrid(this.onsetDetector.getOnsets(), tempo.beatPeriod);
+  }
+
   _ensureContext() {
     if (!this.audioCtx) {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -90,7 +104,38 @@ export class Analyzer {
     this.source = this.audioCtx.createMediaStreamSource(this.stream);
     this.source.connect(this.analyser);
     // Live input is NOT routed to the speakers to avoid feedback.
+    this._startRecording();
     this._begin();
+  }
+
+  /** Capture the mic stream to a buffer (if supported) for later playback. */
+  _startRecording() {
+    this.recordedBuffer = null;
+    this.chunks = [];
+    this.recorder = null;
+    this.discardRecording = false;
+    if (typeof MediaRecorder === "undefined" || !this.stream) return;
+    try {
+      this.recorder = new MediaRecorder(this.stream);
+    } catch (_) {
+      this.recorder = null;
+      return;
+    }
+    this.recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) this.chunks.push(e.data);
+    };
+    this.recorder.onstop = async () => {
+      if (this.discardRecording) return; // a reset happened; drop this take
+      try {
+        const blob = new Blob(this.chunks, { type: this.recorder.mimeType || "audio/webm" });
+        const ab = await blob.arrayBuffer();
+        this.recordedBuffer = await this.audioCtx.decodeAudioData(ab);
+      } catch (_) {
+        this.recordedBuffer = null;
+      }
+      if (this.onRecordingReady) this.onRecordingReady(this.recordedBuffer);
+    };
+    this.recorder.start();
   }
 
   /** Decode and analyze an uploaded audio file, playing it back as it goes. */
@@ -99,6 +144,8 @@ export class Analyzer {
     await this.audioCtx.resume();
     const arrayBuf = await file.arrayBuffer();
     const audioBuf = await this.audioCtx.decodeAudioData(arrayBuf);
+    this.recordedBuffer = audioBuf; // available for playback once analysis ends
+    this.recorder = null;
 
     this._disconnectSource();
     const src = this.audioCtx.createBufferSource();
@@ -189,6 +236,15 @@ export class Analyzer {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = null;
     this._disconnectSource();
+
+    // Finalize recording: the recorder decodes asynchronously and then fires
+    // onRecordingReady; for files the buffer is already available.
+    if (this.recorder && this.recorder.state !== "inactive") {
+      this.recorder.stop();
+    } else if (wasRunning && !this.discardRecording && this.recordedBuffer && this.onRecordingReady) {
+      this.onRecordingReady(this.recordedBuffer);
+    }
+
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
@@ -197,8 +253,12 @@ export class Analyzer {
   }
 
   reset() {
+    this.discardRecording = true; // drop any in-flight mic decode
     this.stop();
     this.noteTracker = new NoteTracker({ a4: this.a4 });
     this.onsetDetector.reset();
+    this.recordedBuffer = null;
+    this.recorder = null;
+    this.chunks = [];
   }
 }

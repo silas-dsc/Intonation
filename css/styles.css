@@ -313,6 +313,67 @@ body {
   cursor: grab;
 }
 .roll-hint { font-size: 0.72rem; color: var(--text-dim); white-space: nowrap; }
+.play-time {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+}
+
+/* Playback transport */
+.playback-controls {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.click-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.click-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+.speed-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.speed-control input[type="range"] {
+  width: 140px;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+}
+.speed-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.speed-control input[type="range"]::-moz-range-thumb {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+.speed-control output {
+  font-weight: 700;
+  color: var(--text);
+  min-width: 36px;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Clickable offenders + history highlight */
 .offender-list li.clickable { cursor: pointer; }

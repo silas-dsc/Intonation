@@ -29,9 +29,15 @@ leaves your device, and there are no runtime dependencies.
 - 🎚️ **Strictness controls** — independent pitch and rhythm sliders set how much
   leeway counts as "accurate". They drive the score colours, the worst-offender
   lists, the history table and the tuning meter.
-- ⏪ **Scrollback** — when the mic is stopped (or a file finishes), scroll or
-  drag the piano roll back through the whole performance. The note-history table
-  highlights and follows the visible window.
+- ⏪ **Scrollback & playback** — when the mic is stopped (or a file finishes),
+  the take is captured for **playback synced to the piano roll**: press play and
+  the roll scrolls with the audio while the note-history table highlights and
+  follows the visible window. Scrub anywhere with the transport slider, or
+  scroll/drag the roll directly.
+- 🥁 **Click track** — toggle a metronome locked to the detected/tapped beat grid
+  (accented downbeats) during playback.
+- 🐢 **Variable speed** — play back from **0.3× to 2×** in 0.1 steps; the click
+  track and roll stay in sync.
 - 🏆 **Worst offenders** — the top 3 most *out of tune* notes and top 3 most
   *out of time* onsets. **Click any one to jump** to that note in the history
   (and centre it in the roll when paused).
@@ -75,8 +81,10 @@ detection, tempo estimation and timing-error analysis.
 | Tempo (BPM) | **Autocorrelation of the onset-strength envelope** over a configurable BPM range, then **exponential smoothing with octave-folding** (`smoothBpm`) for inertia; overridable by tap tempo | `js/rhythm.js` |
 | Timing | Fits a beat grid (best phase offset, eighth-note resolution) and reports each onset's error in ms | `js/rhythm.js` |
 | Strictness → colours | Maps each slider (0–100) to cents/ms thresholds for the green/yellow/red buckets | `js/tolerance.js` |
+| Recording | Mic captured via `MediaRecorder` then decoded to an `AudioBuffer`; uploaded files are decoded directly | `js/analyzer.js` |
+| Playback | `AudioBufferSourceNode` with `playbackRate` for variable speed, a continuous media-time `position()` for roll sync, and a look-ahead metronome scheduler on the beat grid | `js/playback.js` |
 | Audio graph & loop | `AnalyserNode` polled per animation frame; mic input is not routed to the speakers (no feedback), file input is | `js/analyzer.js` |
-| UI & rendering | Live readouts, piano-roll view, offender lists, history table | `js/app.js` |
+| UI & rendering | Live readouts, piano-roll view, transport, offender lists, history table | `js/app.js` |
 
 ## Notes & limitations
 

@@ -192,3 +192,28 @@ export function analyzeTiming(onsets, beatPeriod, { subdivisions = 2 } = {}) {
     return { time: t, errorMs, grid };
   });
 }
+
+/**
+ * Find the beat grid (period + phase offset) that best aligns the given onsets,
+ * at beat resolution. Used to place a click track on the beats.
+ * Returns { period, phase } where beats fall at phase + k*period seconds.
+ */
+export function beatGrid(onsets, beatPeriod) {
+  if (!beatPeriod || beatPeriod <= 0) return { period: 0, phase: 0 };
+  if (!onsets.length) return { period: beatPeriod, phase: 0 };
+
+  let bestPhase = 0;
+  let bestError = Infinity;
+  const steps = 60;
+  for (let s = 0; s < steps; s++) {
+    const phase = (s / steps) * beatPeriod;
+    let err = 0;
+    for (const t of onsets) {
+      const rel = t - phase;
+      const nearest = Math.round(rel / beatPeriod) * beatPeriod + phase;
+      err += Math.abs(t - nearest);
+    }
+    if (err < bestError) { bestError = err; bestPhase = phase; }
+  }
+  return { period: beatPeriod, phase: bestPhase };
+}

@@ -2,6 +2,7 @@
 // readouts, the piano-roll view, worst-offender lists and the note history.
 
 import { Analyzer } from "./analyzer.js";
+import { Playback } from "./playback.js";
 import { frequencyToNote } from "./pitch.js";
 import {
   pitchTolerance,
@@ -34,6 +35,12 @@ const els = {
   bpmMax: $("bpmMax"),
   rollScroll: $("rollScroll"),
   rollScrollHint: $("rollScrollHint"),
+  playTime: $("playTime"),
+  playbackControls: $("playbackControls"),
+  playBtn: $("playBtn"),
+  clickToggle: $("clickToggle"),
+  speed: $("speed"),
+  speedOut: $("speedOut"),
   pitchStrict: $("pitchStrict"),
   rhythmStrict: $("rhythmStrict"),
   pitchStrictOut: $("pitchStrictOut"),
@@ -54,6 +61,15 @@ let latestTime = 0;      // most recent frame time (seconds)
 let isLive = false;
 let viewStart = 0;
 let tapTimes = [];       // recent tap-tempo timestamps (seconds)
+let playheadTime = 0;    // time drawn as the roll cursor
+
+// Playback state.
+let playback = null;     // Playback instance (created once a recording exists)
+let isPlaying = false;
+let seekPos = 0;         // transport position / play-from point (seconds)
+let seeking = false;     // user is dragging the transport slider
+let playbackRate = 1;
+let clickOn = false;
 
 // Accuracy thresholds, driven by the strictness sliders.
 let pitchTol = pitchTolerance(50);
@@ -65,6 +81,7 @@ const analyzer = new Analyzer({
   onNote: handleNote,
   onOnset: handleOnset,
   onStop: handleStop,
+  onRecordingReady: handleRecordingReady,
 });
 
 // ---------- Controls ----------
@@ -204,55 +221,162 @@ function updateTempoBounds() {
   if (!isLive) refreshPaused();
 }
 
-// --- Piano-roll scrolling (enabled when paused) ---
+// --- Transport: a unified time scrubber (review + playback seek) ---
+
+function hasRecording() {
+  return !!(playback && playback.buffer);
+}
+
+function transportMax() {
+  return hasRecording() ? playback.duration : latestTime;
+}
+
+/** Move the transport to a media time: centre the roll and update the UI. */
+function setTransport(t) {
+  seekPos = Math.max(0, Math.min(transportMax(), t));
+  playheadTime = seekPos;
+  viewStart = Math.max(0, seekPos - ROLL.windowSec / 2);
+  els.rollScroll.value = seekPos;
+  updatePlayTimeLabel();
+  redrawRoll();
+  syncHistoryToView();
+}
+
+function configureTransport() {
+  if (isLive) { els.rollScroll.disabled = true; return; }
+  const max = transportMax();
+  els.rollScroll.min = 0;
+  els.rollScroll.max = max;
+  els.rollScroll.step = 0.05;
+  els.rollScroll.value = seekPos;
+  els.rollScroll.disabled = max <= 0.1;
+}
 
 els.rollScroll.addEventListener("input", () => {
   if (isLive) return;
-  viewStart = +els.rollScroll.value;
-  redrawRoll();
-  syncHistoryToView();
+  setTransport(+els.rollScroll.value);
 });
+els.rollScroll.addEventListener("pointerdown", () => { if (!isLive) seeking = true; });
+els.rollScroll.addEventListener("pointerup", releaseSeek);
+els.rollScroll.addEventListener("change", releaseSeek);
+
+function releaseSeek() {
+  if (!seeking) return;
+  seeking = false;
+  if (isPlaying) playback.seek(seekPos);
+}
 
 // Mouse-wheel and drag panning over the canvas when paused.
 els.pianoRoll.addEventListener("wheel", (e) => {
   if (isLive) return;
   e.preventDefault();
   const delta = (e.deltaX || e.deltaY) / 200;
-  setViewStart(viewStart + delta * (ROLL.windowSec / 4));
+  setTransport(seekPos + delta * (ROLL.windowSec / 4));
+  if (isPlaying) playback.seek(seekPos);
 }, { passive: false });
 
-let dragging = false;
 let dragX = 0;
 els.pianoRoll.addEventListener("pointerdown", (e) => {
   if (isLive) return;
-  dragging = true;
+  seeking = true;
   dragX = e.clientX;
   els.pianoRoll.setPointerCapture(e.pointerId);
 });
 els.pianoRoll.addEventListener("pointermove", (e) => {
-  if (!dragging || isLive) return;
+  if (!seeking || isLive) return;
   const dx = e.clientX - dragX;
   dragX = e.clientX;
   const secPerPx = ROLL.windowSec / (els.pianoRoll.clientWidth - ROLL.keyboardW);
-  setViewStart(viewStart - dx * secPerPx); // drag right => go back in time
+  setTransport(seekPos - dx * secPerPx); // drag right => go back in time
 });
-els.pianoRoll.addEventListener("pointerup", () => { dragging = false; });
+els.pianoRoll.addEventListener("pointerup", releaseSeek);
 
-function setViewStart(v) {
-  viewStart = Math.max(0, Math.min(maxViewStart(), v));
-  els.rollScroll.value = viewStart;
-  redrawRoll();
-  syncHistoryToView();
+// --- Playback transport controls ---
+
+els.playBtn.addEventListener("click", togglePlay);
+els.clickToggle.addEventListener("change", () => {
+  clickOn = els.clickToggle.checked;
+  if (playback) playback.setClick(clickOn);
+});
+els.speed.addEventListener("input", () => {
+  playbackRate = +els.speed.value;
+  els.speedOut.textContent = `${playbackRate.toFixed(1)}×`;
+  if (playback) playback.setRate(playbackRate);
+});
+
+function togglePlay() {
+  if (!hasRecording()) return;
+  if (isPlaying) pausePlayback();
+  else startPlayback();
 }
 
-function maxViewStart() {
-  return Math.max(0, latestTime - ROLL.windowSec);
+function startPlayback() {
+  const grid = analyzer.getBeatGrid();
+  if (grid) playback.setBeat(grid.period, grid.phase);
+  playback.setRate(playbackRate);
+  playback.setClick(clickOn);
+  let from = seekPos;
+  if (from >= playback.duration - 0.05) from = 0; // restart if parked at the end
+  isPlaying = true;
+  setPlayBtn(true);
+  playback.play(from);
+  playbackLoop();
+}
+
+function pausePlayback() {
+  if (playback) playback.pause();
+  isPlaying = false;
+  setPlayBtn(false);
+  if (playback) setTransport(playback.position());
+}
+
+function stopPlaybackIfAny() {
+  if (playback && isPlaying) playback.pause();
+  isPlaying = false;
+  setPlayBtn(false);
+}
+
+function handlePlaybackEnded() {
+  isPlaying = false;
+  setPlayBtn(false);
+  setTransport(0);
+}
+
+function playbackLoop() {
+  if (!isPlaying) return;
+  requestAnimationFrame(playbackLoop);
+  const pos = playback.position();
+  playheadTime = pos;
+  if (!seeking) {
+    seekPos = pos;
+    els.rollScroll.value = pos;
+    updatePlayTimeLabel();
+    redrawRoll();
+    syncHistoryToView();
+  }
+}
+
+function setPlayBtn(playing) {
+  els.playBtn.textContent = playing ? "⏸ Pause" : "▶ Play";
+}
+
+function updatePlayTimeLabel() {
+  const cur = formatTime(seekPos);
+  els.playTime.textContent = hasRecording() ? `${cur} / ${formatTime(playback.duration)}` : cur;
+}
+
+function formatTime(s) {
+  s = Math.max(0, s);
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
 // ---------- Event handlers ----------
 
 function handleFrame(data) {
   latestTime = data.time;
+  playheadTime = data.time;
 
   // Live pitch readout.
   if (data.freq > 0) {
@@ -310,20 +434,37 @@ function handleOnset() {
 function setLive(live) {
   isLive = live;
   if (live) {
+    stopPlaybackIfAny();
+    els.playbackControls.hidden = true;
     els.rollScroll.disabled = true;
-    els.rollScrollHint.textContent = "Stop the mic to scroll back through the performance.";
+    els.rollScrollHint.textContent = "Recording… playback & scrollback available after you stop.";
     clearHistoryHighlight();
   } else {
-    // Park the view on the most recent window and enable scrolling.
-    viewStart = maxViewStart();
-    els.rollScroll.max = maxViewStart();
-    els.rollScroll.value = viewStart;
-    els.rollScroll.disabled = latestTime <= ROLL.windowSec;
+    // Park the transport so the final window is in view, and enable scrolling.
+    seekPos = Math.max(0, latestTime - ROLL.windowSec / 2);
+    configureTransport();
+    setTransport(seekPos);
     els.rollScrollHint.textContent =
-      latestTime > ROLL.windowSec ? "Scroll or drag to review earlier notes." : "Performance fits one screen.";
-    redrawRoll();
-    syncHistoryToView();
+      latestTime > ROLL.windowSec ? "Scroll, drag, or play back to review." : "";
   }
+}
+
+/** Called once a recording (mic or file) is decoded and ready for playback. */
+function handleRecordingReady(buffer) {
+  if (!buffer) {
+    els.playbackControls.hidden = true;
+    setStatus("Recording captured, but playback isn’t supported in this browser.");
+    return;
+  }
+  if (!playback) playback = new Playback(analyzer.audioCtx);
+  playback.setBuffer(buffer);
+  playback.onEnded = handlePlaybackEnded;
+  els.playbackControls.hidden = false;
+  els.clickToggle.checked = clickOn;
+  els.speed.value = playbackRate;
+  els.speedOut.textContent = `${playbackRate.toFixed(1)}×`;
+  configureTransport();
+  updatePlayTimeLabel();
 }
 
 /** Window start currently shown: follows "now" when live, else the scroll pos. */
@@ -484,7 +625,10 @@ function scrollToHistory(idx) {
 function jumpToNote(idx) {
   const n = notes[idx];
   if (!n) return;
-  if (!isLive) setViewStart(n.startTime - ROLL.windowSec / 2);
+  if (!isLive) {
+    if (isPlaying) playback.seek(n.startTime);
+    setTransport(n.startTime); // centre the note in the roll
+  }
   scrollToHistory(idx);
 }
 
@@ -637,11 +781,11 @@ function renderPianoRoll(noteList, timing, winStart, tempo) {
   }
   ctx.restore();
 
-  // Playhead cursor at the latest analyzed time, when it's within view.
-  if (latestTime >= start && latestTime <= end) {
+  // Playhead cursor (live time or playback position), when it's within view.
+  if (playheadTime >= start && playheadTime <= end) {
     ctx.strokeStyle = "rgba(124,92,255,0.7)";
     ctx.lineWidth = 2;
-    const nx = xOf(latestTime);
+    const nx = xOf(playheadTime);
     ctx.beginPath();
     ctx.moveTo(nx, 0);
     ctx.lineTo(nx, cssH);
@@ -719,11 +863,20 @@ function resetState() {
   els.historyBody.innerHTML = '<tr class="empty"><td colspan="5">Nothing yet.</td></tr>';
   latestTime = 0;
   viewStart = 0;
+  playheadTime = 0;
+  seekPos = 0;
   isLive = false;
+  // Tear down any playback.
+  if (playback) playback.stop();
+  isPlaying = false;
+  playback = null;
+  setPlayBtn(false);
+  els.playbackControls.hidden = true;
   els.rollScroll.max = 0;
   els.rollScroll.value = 0;
   els.rollScroll.disabled = true;
   els.rollScrollHint.textContent = "Stop the mic to scroll back through the performance.";
+  els.playTime.textContent = "0:00";
   renderOutOfTune();
   renderOutOfTime();
   const ctx = els.pianoRoll.getContext("2d");

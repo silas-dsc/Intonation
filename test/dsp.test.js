@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { detectPitch, frequencyToNote, noteToFrequency } from "../js/pitch.js";
-import { estimateTempo, analyzeTiming, smoothBpm } from "../js/rhythm.js";
+import { estimateTempo, analyzeTiming, smoothBpm, beatGrid } from "../js/rhythm.js";
 
 const SR = 44100;
 
@@ -112,6 +112,22 @@ test("smoothBpm folds octave errors toward the previous tempo", () => {
   // A halved estimate likewise.
   const next2 = smoothBpm(120, 60, 0.5);
   assert.ok(Math.abs(next2 - 120) < 1, `got ${next2}`);
+});
+
+test("beatGrid recovers the phase of on-beat onsets", () => {
+  const period = 0.5; // 120 BPM
+  const phase = 0.2;  // beats fall at 0.2, 0.7, 1.2, ...
+  const onsets = [0.2, 0.7, 1.2, 1.7, 2.2];
+  const grid = beatGrid(onsets, period);
+  assert.equal(grid.period, period);
+  // Phase is modulo the period; should be close to 0.2.
+  const diff = Math.min(Math.abs(grid.phase - phase), period - Math.abs(grid.phase - phase));
+  assert.ok(diff < 0.03, `expected phase ~0.2, got ${grid.phase}`);
+});
+
+test("beatGrid is safe with no onsets or no tempo", () => {
+  assert.deepEqual(beatGrid([], 0.5), { period: 0.5, phase: 0 });
+  assert.deepEqual(beatGrid([1, 2], 0), { period: 0, phase: 0 });
 });
 
 test("analyzeTiming flags a late onset", () => {
